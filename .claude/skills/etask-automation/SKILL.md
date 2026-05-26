@@ -1,0 +1,153 @@
+---
+name: eTask Automation
+description: >
+  Manage tasks, checklists, comments, projects, sprints, workspaces, and analytics
+  in the FIS eTask platform via its AI-agent REST API (PAT auth).
+  Trigger phrases: "create task", "update task", "search tasks", "my tasks",
+  "add comment", "add checklist", "show statistics", "overdue tasks",
+  "list my projects", "show workspace", "get sprint", "tạo task", "task của tôi".
+---
+
+# eTask Automation
+
+## Feature Flags
+
+```yaml
+ENABLE_TASK_WRITE: true      # create / update / delete / move tasks
+ENABLE_ANALYTICS: true       # statistics + dashboard tools
+ENABLE_SEARCH: true          # Elasticsearch-backed search tools
+ENABLE_PAT_MGMT: false       # PAT token management (disabled – bootstrap manually)
+```
+
+## Available Tools
+
+All tools are in `tools/` relative to this SKILL.md. The agent **MUST** read tool
+source before first use to understand exact function signatures.
+
+| Tool | Purpose |
+|------|---------|
+| `tools/config.py` | Config loader — reads `.env` for `ETASK_BASE_URL`, `ETASK_PAT_TOKEN`, `ETASK_VERIFY_SSL` |
+| `tools/client.py` | Shared urllib HTTP client — PAT via `X-eTask-PAT` header, SSL toggle |
+| `tools/tasks.py` | Task CRUD: get, query, create, update, delete, complete, move, sprint ops |
+| `tools/checklists.py` | Checklist items, comments, and file attachments |
+| `tools/projects.py` | Projects, sprints, workspaces, lists/boards |
+| `tools/search.py` | Elasticsearch-backed task search (full-text + filters) |
+| `tools/analytics.py` | Dashboard statistics, trends, overdue, finish rates |
+| `tools/auth.py` | PAT management (list/revoke — create requires session JWT) |
+
+## Workflows
+
+### Workflow 1: Task Lookup & Navigation _(read-only)_
+
+**Triggers:** "show my tasks", "find task", "search tasks", "what tasks do I have",
+"list tasks in sprint", "show task details", "get subtasks", "task của tôi"
+
+**Steps:**
+1. Read `cookbook/task-lookup.md` for guidance
+2. Start with `search_my_assigned_tasks` when user says "my tasks" (no args)
+3. Use `search_tasks` for broader query: `python3 search.py my-tasks`
+4. Drill into task: `python3 tasks.py get <task_id>`
+5. Get subtasks: `python3 tasks.py subtasks <parent_task_id>`
+6. Sprint scope: `python3 tasks.py by-sprint <sprint_id>`
+7. List-scoped: `python3 tasks.py query <list_task_id> [--status STATUS]`
+
+### Workflow 2: Task CRUD _(write — confirm destructive ops)_
+
+**Triggers:** "create task", "add task", "update task", "complete task", "done with task",
+"delete task", "move task to", "assign task to sprint", "tạo task", "cập nhật task"
+
+**Steps:**
+1. Read `cookbook/task-crud.md` for workflow details
+2. Discover list ID if unknown: `python3 projects.py my-lists`
+3. **Create:** `python3 tasks.py create --name "NAME" --list LIST_ID [--priority MEDIUM] [--due DATE]`
+4. **Update:** `python3 tasks.py update TASK_ID [--name X] [--status X] [--priority X]`
+5. **Complete:** `python3 tasks.py complete TASK_ID`
+6. **Move:** `python3 tasks.py move TASK_ID TARGET_LIST_ID`
+7. **Sprint:** `python3 tasks.py assign-sprint TASK_ID SPRINT_ID`
+8. **Delete:** ⚠️ Confirm with user first → `python3 tasks.py delete TASK_ID`
+
+### Workflow 3: Checklist & Comment Management _(read + write)_
+
+**Triggers:** "add checklist item", "check off item", "add comment", "post comment",
+"view comments", "list attachments", "thêm checklist", "bình luận task"
+
+**Steps:**
+1. Read `cookbook/checklist-comments.md`
+2. View checklists: `python3 checklists.py list TASK_ID`
+3. Add checklist: `python3 checklists.py create TASK_ID "ITEM NAME"`
+4. Delete item: ⚠️ Confirm → `python3 checklists.py delete CHECKLIST_ID`
+5. View files: `python3 checklists.py attachments TASK_ID`
+6. Read comments: `python3 checklists.py comments TASK_ID`
+7. Post comment: `python3 checklists.py add-comment TASK_ID "CONTENT"`
+8. Delete comment: ⚠️ Confirm → `python3 checklists.py del-comment COMMENT_ID`
+
+### Workflow 4: Project & Sprint Navigation _(read-only)_
+
+**Triggers:** "list my projects", "show sprints", "get sprint details",
+"which project is this list in", "show workspace", "list boards", "dự án của tôi"
+
+**Steps:**
+1. Read `cookbook/project-sprint-navigation.md`
+2. My projects: `python3 projects.py my-projects`
+3. Project details: `python3 projects.py get-project PROJECT_ID`
+4. Sprints in project: `python3 projects.py sprints PROJECT_ID`
+5. Sprint details: `python3 projects.py get-sprint SPRINT_ID`
+6. Project from list: `python3 projects.py project-for-list LIST_ID`
+7. Workspace: `python3 projects.py workspace WORKSPACE_ID`
+8. Lists in workspace: `python3 projects.py lists WORKSPACE_ID`
+9. My lists: `python3 projects.py my-lists`
+
+### Workflow 5: Analytics & Reporting _(read-only)_
+
+**Triggers:** "show statistics", "task stats", "how many tasks done", "overdue tasks",
+"completion trend", "tasks by priority", "unassigned tasks", "task history",
+"báo cáo task", "thống kê"
+
+**Steps:**
+1. Read `cookbook/analytics-reporting.md`
+2. High-level overview: `python3 analytics.py stats`
+3. Branch by user intent:
+   - Status counts: `python3 analytics.py by-status [--scope my|org]`
+   - By assignee: `python3 analytics.py by-assignee [--list LIST_ID]`
+   - By department: `python3 analytics.py by-org [--scope my|org]`
+   - Priority chart: `python3 analytics.py by-priority`
+   - Overdue: `python3 analytics.py overdue LIST_ID`
+   - Trends: `python3 analytics.py trends --start DATE --end DATE --period day|week|month`
+   - Finish rates: `python3 analytics.py finish-rates`
+   - Unassigned count: `python3 analytics.py unassigned [--list LIST_ID]`
+   - Activity history: `python3 analytics.py history [--scope my|org]`
+
+## Routing Rules
+
+| User says... | Workflow | Cookbook |
+|---|---|---|
+| "my tasks" / "show assigned tasks" / "task của tôi" | Workflow 1 | `cookbook/task-lookup.md` |
+| "find task X" / "search tasks" / "tìm task" | Workflow 1 | `cookbook/task-lookup.md` |
+| "create task" / "add task" / "tạo task" | Workflow 2 | `cookbook/task-crud.md` |
+| "update task" / "complete task" / "delete task" | Workflow 2 | `cookbook/task-crud.md` |
+| "add checklist" / "add comment" / "view comments" | Workflow 3 | `cookbook/checklist-comments.md` |
+| "list projects" / "show sprints" / "workspace" | Workflow 4 | `cookbook/project-sprint-navigation.md` |
+| "statistics" / "task stats" / "overdue" / "thống kê" | Workflow 5 | `cookbook/analytics-reporting.md` |
+
+## Slash Commands
+
+| Command | Workflow |
+|---------|----------|
+| `/etask-search [query]` | Workflow 1 – Task Lookup |
+| `/etask-create <name> [list_id]` | Workflow 2 – Create Task |
+| `/etask-projects` | Workflow 4 – Project Navigation |
+| `/etask-stats [scope]` | Workflow 5 – Analytics |
+
+Run Python from `tools/` — `python3` on Linux/macOS, `python` on Windows if `python3` unavailable.
+
+## Important Rules
+
+1. **Always read the relevant cookbook BEFORE starting a workflow** — it contains detailed steps.
+2. **Always read tool source code before first use** to understand exact signatures.
+3. **Never hardcode tokens or URLs** — always use `config.py` to load from `.env`.
+4. **Confirm before destructive operations:** `delete_task`, `delete_comment`, `delete_checklist`.
+5. **Confirm before terminal status changes:** updating a task to DONE/CANCELLED — show current status first.
+6. **SSL:** if `ETASK_VERIFY_SSL=false`, warn the user that certificate validation is disabled.
+7. **Search fallback:** if Elasticsearch is down, fall back to `tasks.py query` (direct DB via API).
+8. **Cap bulk operations** at 20 items per agent turn — ask user to confirm if more needed.
+9. **PAT bootstrap:** `auth.py create` requires a session JWT, not a PAT — user must run the curl in `cookbook/project-sprint-navigation.md` manually first.

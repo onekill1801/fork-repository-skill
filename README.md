@@ -25,6 +25,70 @@ Skills live in `.claude/skills/` directories and consist of:
 
 When you say something like "fork terminal to run tests with Claude Code", Claude automatically detects the matching skill, reads the instructions, and executes the workflow.
 
+## Slash Commands
+
+Slash commands live in `.claude/commands/` and run when you type `/command` in Claude Code (project must be the working directory).
+
+| Command | Description |
+|---------|-------------|
+| `/prime` | Onboard agent: read README, all skills, cookbooks, and tools |
+| `/all_skills` | List skills and slash commands in this repo |
+| `/list-tasks` | List your Azure DevOps work items |
+| `/read-task <id>` | Read one Azure DevOps task |
+| `/review-mr <iid>` | Review a GitLab merge request |
+| `/fix-bug <id>` | Full bug-fix workflow (branch, code, MR, notify) |
+| `/implement-feature <id>` | Full feature workflow |
+| `/notify-tester <id> [url]` | Notify testers via Azure DevOps comment |
+
+**Recommended first session:**
+
+```bash
+cd /path/to/fork-repository-skill
+cp .env.sample .env   # fill in Azure DevOps + GitLab tokens
+claude --dangerously-skip-permissions
+```
+
+Then type `/prime`, then e.g. `/list-tasks` or `/review-mr 524`.
+
+Natural language still works (skills auto-trigger): `list my tasks`, `review MR #524`, `fix bug task #6955`.
+
+## Dev Automation Skill
+
+Automates Azure DevOps tasks + GitLab merge requests (review, fix bug, implement feature, notify testers).
+
+**Setup:** Copy `.env.sample` to `.env` and set `AZURE_DEVOPS_*`, `GITLAB_*`, and `SSL_VERIFY=false` if your GitLab uses a corporate/self-signed certificate.
+
+**Tools** (stdlib only, no pip install):
+
+```bash
+cd .claude/skills/dev-automation/tools
+python3 config.py          # verify .env
+python3 azure_devops.py list
+python3 gitlab_api.py list-mrs
+```
+
+Copy `.claude/skills/dev-automation/` and `.env` into your Java project repo when fixing bugs or implementing features in application code.
+
+## Skill Scaffold (import tools from your app)
+
+If you build an application with **agent tools** (Python, MCP, OpenAPI, TypeScript), use **skill-scaffold** to extract them and generate a new Claude Code skill in this repo.
+
+**In your application repo** — copy the prompt from:
+
+`.claude/skills/skill-scaffold/prompts/run_in_source_app_prompt.md`
+
+Save output as `tool-export.yaml`, then copy to `fork-repository-skill/temp/tool-inventory.yaml`.
+
+**In fork-repository-skill:**
+
+| Step | Command |
+|------|---------|
+| 1 | `/extract-tools` (or paste inventory into `temp/tool-inventory.yaml`) |
+| 2 | `/design-skill` |
+| 3 | `/scaffold-skill` |
+
+Natural language: `extract tools from <path>`, `scaffold skill from inventory`.
+
 ## Purpose
 
 This skill allows you to:
@@ -157,17 +221,27 @@ These examples demonstrate usage patterns for other projects.
 ## Architecture
 
 ```
-.claude/skills/fork-terminal/
-├── SKILL.md                    # Skill definition and workflow
-├── cookbook/
-│   ├── cli-command.md          # Raw CLI instructions
-│   ├── claude-code.md          # Claude Code agent instructions
-│   ├── codex-cli.md            # Codex CLI instructions
-│   └── gemini-cli.md           # Gemini CLI instructions
-├── prompts/
-│   └── fork_summary_user_prompt.md  # Template for context handoff
-└── tools/
-    └── fork_terminal.py        # Cross-platform terminal spawner
+.claude/
+├── commands/                   # Slash commands (/prime, /review-mr, ...)
+│   ├── prime.md
+│   ├── all_skills.md
+│   ├── list-tasks.md
+│   ├── read-task.md
+│   ├── review-mr.md
+│   ├── fix-bug.md
+│   ├── implement-feature.md
+│   └── notify-tester.md
+└── skills/
+    ├── fork-terminal/
+    │   ├── SKILL.md
+    │   ├── cookbook/           # claude-code, codex, gemini, antigravity, cli
+    │   ├── prompts/
+    │   └── tools/fork_terminal.py
+    └── dev-automation/
+        ├── SKILL.md
+        ├── cookbook/           # review, fix-bug, feature, java-standards
+        ├── prompts/
+        └── tools/              # azure_devops, gitlab_api, notifier, config
 ```
 
 ## Platform Support

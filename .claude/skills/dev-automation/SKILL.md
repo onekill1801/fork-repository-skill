@@ -102,6 +102,21 @@ When the user makes a request, match it to the correct workflow:
 | "list my tasks" / "show assigned tasks" | Direct call | `python azure_devops.py list` |
 | "list open MRs" | Direct call | `python gitlab_api.py list-mrs` |
 
+## Slash Commands (explicit invocation)
+
+Same workflows as above, via `.claude/commands/`:
+
+| Command | Workflow |
+|---------|----------|
+| `/list-tasks` | List assigned Azure DevOps work items |
+| `/read-task <id>` | Get one work item |
+| `/review-mr <iid>` | Workflow 1 |
+| `/fix-bug <id>` | Workflow 2 |
+| `/implement-feature <id>` | Workflow 3 |
+| `/notify-tester <id> [url]` | Workflow 4 |
+
+Run Python tools from `tools/` relative to this skill. Use `python3` on Linux/macOS; `python` on Windows if `python3` is unavailable.
+
 ## Important Rules
 
 1. **Always read the relevant cookbook BEFORE starting a workflow** — it contains detailed instructions.

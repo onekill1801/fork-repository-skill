@@ -14,7 +14,8 @@ ENABLE_RAW_CLI_COMMANDS: true
 ENABLE_GEMINI_CLI: true
 ENABLE_CODEX_CLI: true
 ENABLE_CLAUDE_CODE: true
-AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli
+ENABLE_ANTIGRAVITY_CLI: true
+AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli, antigravity-cli
 
 ## Instructions
 
@@ -79,3 +80,12 @@ AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli
   - "fork terminal use gemini to <xyz>"
   - "spin up a new terminal request <xyz> with gemini"
   - "create a new terminal to <xyz> using gemini"
+
+### Antigravity CLI
+
+- IF: The user requests an antigravity (agy) agent to execute the command AND `ENABLE_ANTIGRAVITY_CLI` is true.
+- THEN: Read and execute: `.claude/skills/fork-terminal/cookbook/antigravity-cli.md`
+- EXAMPLES:
+  - "fork terminal use antigravity to <xyz>"
+  - "fork terminal use agy to <xyz>"
+  - "create a new terminal to <xyz> with antigravity"

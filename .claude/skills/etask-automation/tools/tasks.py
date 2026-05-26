@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""Task CRUD + sprint tools for eTask AI-agent.
+
+Wraps TaskTools via POST /api/ai/execute.
+
+Usage:
+  python3 tasks.py get <task_id>
+  python3 tasks.py query <list_task_id> [--status STATUS] [--parent PARENT_ID]
+  python3 tasks.py subtasks <parent_task_id>
+  python3 tasks.py create --name NAME --list LIST_ID [--parent PARENT_ID]
+                          [--desc DESC] [--priority LOW|MEDIUM|HIGH|URGENT]
+                          [--start ISO_DATE] [--due ISO_DATE]
+  python3 tasks.py update <task_id> [--name X] [--desc X] [--status X]
+                          [--priority X] [--start ISO] [--due ISO]
+  python3 tasks.py complete <task_id>
+  python3 tasks.py delete <task_id>
+  python3 tasks.py move <task_id> <target_list_id>
+  python3 tasks.py assign-sprint <task_id> <sprint_id>
+  python3 tasks.py by-sprint <sprint_id>
+"""
+
+import argparse
+import sys
+
+import client
+import config
+
+
+# ── Tool wrappers ──────────────────────────────────────────────────────────────
+
+def get_task(task_id: str) -> dict:
+    result = client.execute_tool("get_task", {"task_id": task_id})
+    client.check_error(result, "get_task")
+    return result
+
+
+def query_tasks(list_task_id: str, status: str = None, parent_id: str = None) -> dict:
+    args = {"list_task_id": list_task_id}
+    if status:
+        args["status"] = status
+    if parent_id:
+        args["parent_id"] = parent_id
+    result = client.execute_tool("query_tasks", args)
+    client.check_error(result, "query_tasks")
+    return result
+
+
+def get_subtasks(parent_task_id: str) -> dict:
+    result = client.execute_tool("get_subtasks", {"parent_task_id": parent_task_id})
+    client.check_error(result, "get_subtasks")
+    return result
+
+
+def create_task(name: str, list_task_id: str, parent_id: str = None,
+                description: str = None, priority: str = None,
+                start_date: str = None, due_date: str = None) -> dict:
+    args = {"name": name, "list_task_id": list_task_id}
+    if parent_id:
+        args["parent_id"] = parent_id
+    if description:
+        args["description"] = description
+    if priority:
+        args["priority"] = priority.upper()
+    if start_date:
+        args["start_date"] = start_date
+    if due_date:
+        args["due_date"] = due_date
+    result = client.execute_tool("create_task", args)
+    client.check_error(result, "create_task")
+    return result
+
+
+def update_task(task_id: str, name: str = None, description: str = None,
+                status: str = None, priority: str = None,
+                start_date: str = None, due_date: str = None) -> dict:
+    args = {"task_id": task_id}
+    if name is not None:
+        args["name"] = name
+    if description is not None:
+        args["description"] = description
+    if status is not None:
+        args["status"] = status
+    if priority is not None:
+        args["priority"] = priority.upper()
+    if start_date is not None:
+        args["start_date"] = start_date
+    if due_date is not None:
+        args["due_date"] = due_date
+    result = client.execute_tool("update_task", args)
+    client.check_error(result, "update_task")
+    return result
+
+
+def complete_task(task_id: str) -> dict:
+    result = client.execute_tool("complete_task", {"task_id": task_id})
+    client.check_error(result, "complete_task")
+    return result
+
+
+def delete_task(task_id: str) -> dict:
+    result = client.execute_tool("delete_task", {"task_id": task_id})
+    client.check_error(result, "delete_task")
+    return result
+
+
+def move_task(task_id: str, target_list_id: str) -> dict:
+    result = client.execute_tool("move_task", {"task_id": task_id, "target_list_id": target_list_id})
+    client.check_error(result, "move_task")
+    return result
+
+
+def assign_task_to_sprint(task_id: str, sprint_id: str) -> dict:
+    result = client.execute_tool("assign_task_to_sprint", {"task_id": task_id, "sprint_id": sprint_id})
+    client.check_error(result, "assign_task_to_sprint")
+    return result
+
+
+def get_tasks_by_sprint(sprint_id: str) -> dict:
+    result = client.execute_tool("get_tasks_by_sprint", {"sprint_id": sprint_id})
+    client.check_error(result, "get_tasks_by_sprint")
+    return result
+
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    missing = config.validate()
+    if missing:
+        print(f"[ERROR] Missing config: {', '.join(missing)} — run: python3 config.py", file=sys.stderr)
+        sys.exit(1)
+
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(0)
+
+    cmd = sys.argv[1]
+
+    if cmd == "get":
+        parser = argparse.ArgumentParser(prog="tasks.py get")
+        parser.add_argument("task_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_task(args.task_id))
+
+    elif cmd == "query":
+        parser = argparse.ArgumentParser(prog="tasks.py query")
+        parser.add_argument("list_task_id")
+        parser.add_argument("--status", default=None)
+        parser.add_argument("--parent", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(query_tasks(args.list_task_id, args.status, args.parent))
+
+    elif cmd == "subtasks":
+        parser = argparse.ArgumentParser(prog="tasks.py subtasks")
+        parser.add_argument("parent_task_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_subtasks(args.parent_task_id))
+
+    elif cmd == "create":
+        parser = argparse.ArgumentParser(prog="tasks.py create")
+        parser.add_argument("--name", required=True)
+        parser.add_argument("--list", dest="list_id", required=True)
+        parser.add_argument("--parent", default=None)
+        parser.add_argument("--desc", default=None)
+        parser.add_argument("--priority", default=None, choices=["LOW", "MEDIUM", "HIGH", "URGENT"])
+        parser.add_argument("--start", default=None)
+        parser.add_argument("--due", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(create_task(
+            args.name, args.list_id, args.parent, args.desc,
+            args.priority, args.start, args.due
+        ))
+
+    elif cmd == "update":
+        parser = argparse.ArgumentParser(prog="tasks.py update")
+        parser.add_argument("task_id")
+        parser.add_argument("--name", default=None)
+        parser.add_argument("--desc", default=None)
+        parser.add_argument("--status", default=None)
+        parser.add_argument("--priority", default=None)
+        parser.add_argument("--start", default=None)
+        parser.add_argument("--due", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(update_task(
+            args.task_id, args.name, args.desc, args.status,
+            args.priority, args.start, args.due
+        ))
+
+    elif cmd == "complete":
+        parser = argparse.ArgumentParser(prog="tasks.py complete")
+        parser.add_argument("task_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(complete_task(args.task_id))
+
+    elif cmd == "delete":
+        parser = argparse.ArgumentParser(prog="tasks.py delete")
+        parser.add_argument("task_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(delete_task(args.task_id))
+
+    elif cmd == "move":
+        parser = argparse.ArgumentParser(prog="tasks.py move")
+        parser.add_argument("task_id")
+        parser.add_argument("target_list_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(move_task(args.task_id, args.target_list_id))
+
+    elif cmd == "assign-sprint":
+        parser = argparse.ArgumentParser(prog="tasks.py assign-sprint")
+        parser.add_argument("task_id")
+        parser.add_argument("sprint_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(assign_task_to_sprint(args.task_id, args.sprint_id))
+
+    elif cmd == "by-sprint":
+        parser = argparse.ArgumentParser(prog="tasks.py by-sprint")
+        parser.add_argument("sprint_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_tasks_by_sprint(args.sprint_id))
+
+    else:
+        print(f"Unknown command: {cmd}\n", file=sys.stderr)
+        print(__doc__)
+        sys.exit(1)

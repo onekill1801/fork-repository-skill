@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Configuration loader for dev-automation tools.
+"""Configuration loader for etask-automation tools.
 
 Reads settings from environment variables or a .env file in the project root.
-Zero external dependencies - uses only Python stdlib.
+Zero external dependencies — uses only Python stdlib.
+
+Usage:
+  python3 config.py          # validate and print current settings
 """
 
 import os
@@ -32,7 +35,7 @@ def _load_dotenv():
     env_path = os.path.join(os.getcwd(), ".env")
     if not os.path.isfile(env_path):
         search = os.path.dirname(os.path.abspath(__file__))
-        for _ in range(5):
+        for _ in range(6):
             candidate = os.path.join(search, ".env")
             if os.path.isfile(candidate):
                 env_path = candidate
@@ -59,42 +62,39 @@ def get(key: str, default: str = "") -> str:
     return os.environ.get(key, default).strip()
 
 
-# Azure DevOps
-AZURE_DEVOPS_ORG = property(lambda _: get("AZURE_DEVOPS_ORG"))
-AZURE_DEVOPS_PROJECT = property(lambda _: get("AZURE_DEVOPS_PROJECT"))
-AZURE_DEVOPS_PAT = property(lambda _: get("AZURE_DEVOPS_PAT"))
-
-# GitLab
-GITLAB_URL = property(lambda _: get("GITLAB_URL"))
-GITLAB_PRIVATE_TOKEN = property(lambda _: get("GITLAB_PRIVATE_TOKEN"))
-GITLAB_PROJECT_ID = property(lambda _: get("GITLAB_PROJECT_ID"))
+def base_url() -> str:
+    """Return ETASK_BASE_URL with trailing slash stripped."""
+    return get("ETASK_BASE_URL", "http://localhost:8080").strip().rstrip("/")
 
 
-def azure_base_url() -> str:
-    org = get("AZURE_DEVOPS_ORG")
-    project = get("AZURE_DEVOPS_PROJECT")
-    return f"https://dev.azure.com/{org}/{project}/_apis"
+def pat_token() -> str:
+    return get("ETASK_PAT_TOKEN").strip()
 
 
-def gitlab_base_url() -> str:
-    url = get("GITLAB_URL", "https://gitlab.com").rstrip("/")
-    return f"{url}/api/v4"
+def pat_header_name() -> str:
+    """HTTP header name for PAT authentication (default: X-eTask-PAT)."""
+    return get("ETASK_PAT_HEADER", "X-eTask-PAT").strip()
 
 
-def validate() -> list[str]:
-    """Return a list of missing required config keys."""
-    required = [
-        "AZURE_DEVOPS_ORG", "AZURE_DEVOPS_PROJECT", "AZURE_DEVOPS_PAT",
-        "GITLAB_URL", "GITLAB_PRIVATE_TOKEN", "GITLAB_PROJECT_ID",
-    ]
+def verify_ssl() -> bool:
+    return get("ETASK_VERIFY_SSL", "true").lower() not in ("false", "0", "no")
+
+
+def validate() -> list:
+    """Return list of missing required config keys."""
+    required = ["ETASK_BASE_URL", "ETASK_PAT_TOKEN"]
     return [k for k in required if not get(k)]
 
 
 if __name__ == "__main__":
     missing = validate()
     if missing:
-        print(f"Missing config: {', '.join(missing)}")
+        print(f"[ERROR] Missing required config: {', '.join(missing)}")
+        print("  Set these in your .env file:")
+        print("    ETASK_BASE_URL=https://etask.example.com")
+        print("    ETASK_PAT_TOKEN=<your-personal-access-token>")
     else:
-        print("All config keys present.")
-        print(f"  Azure: {azure_base_url()}")
-        print(f"  GitLab: {gitlab_base_url()}")
+        print("[OK] Config valid.")
+        print(f"  ETASK_BASE_URL   = {base_url()}")
+        print(f"  ETASK_PAT_TOKEN  = {'*' * 8}...{pat_token()[-4:] if len(pat_token()) > 4 else '****'}")
+        print(f"  ETASK_VERIFY_SSL = {verify_ssl()}")
