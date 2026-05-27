@@ -36,7 +36,27 @@ def fork_terminal(command: str) -> str:
         return "Windows terminal launched"
 
     else:  # Linux and others
-        raise NotImplementedError(f"Platform {system} not supported")
+        import shutil
+        shell_command = f"cd '{cwd}' && {command}; exec bash"
+        if shutil.which("gnome-terminal"):
+            if shutil.which("dbus-run-session"):
+                subprocess.Popen(["dbus-run-session", "gnome-terminal", "--", "bash", "-c", shell_command])
+                return "Linux gnome-terminal (dbus-run-session) launched"
+            else:
+                subprocess.Popen(["gnome-terminal", "--", "bash", "-c", shell_command])
+                return "Linux gnome-terminal launched"
+        elif shutil.which("x-terminal-emulator"):
+            if shutil.which("dbus-run-session") and "gnome-terminal" in os.path.realpath(shutil.which("x-terminal-emulator")):
+                subprocess.Popen(["dbus-run-session", "x-terminal-emulator", "-e", f"bash -c \"{shell_command}\""])
+                return "Linux x-terminal-emulator (dbus-run-session) launched"
+            else:
+                subprocess.Popen(["x-terminal-emulator", "-e", f"bash -c \"{shell_command}\""])
+                return "Linux x-terminal-emulator launched"
+        elif shutil.which("xterm"):
+            subprocess.Popen(["xterm", "-e", f"bash -c \"{shell_command}\""])
+            return "Linux xterm launched"
+        else:
+            raise NotImplementedError(f"Platform {system} not supported (no compatible terminal emulator found)")
 
 
 if __name__ == "__main__":
