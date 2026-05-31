@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Azure DevOps Work Items API client.
 
-Provides functions to read tasks, update state, add comments, and query
-assigned work items. Uses only Python stdlib (urllib + json).
+Provides functions to read tasks, update state, add comments, assign users,
+and query assigned work items. Uses only Python stdlib (urllib + json).
 
 Usage:
     python azure_devops.py get <work_item_id>
     python azure_devops.py comment <work_item_id> "Your comment here"
     python azure_devops.py state <work_item_id> <New|Active|Resolved|Closed>
+    python azure_devops.py assign <work_item_id> <user_email_or_name>
     python azure_devops.py list [assigned_to_email]
 """
 
@@ -101,6 +102,29 @@ def update_work_item_state(item_id: int, state: str) -> dict:
                     content_type="application/json-patch+json")
 
 
+def assign_work_item(item_id: int, assignee: str) -> dict:
+    """Assign a work item to a user by email or display name.
+
+    Args:
+        item_id: Work item ID
+        assignee: User email (e.g., 'user@domain.com') or display name
+
+    Returns:
+        dict with updated work item info or error
+    """
+    base = config.azure_base_url()
+    url = f"{base}/wit/workitems/{item_id}?api-version=7.0"
+    patch_doc = [
+        {
+            "op": "replace",
+            "path": "/fields/System.AssignedTo",
+            "value": assignee,
+        }
+    ]
+    return _request(url, method="PATCH", data=patch_doc,
+                    content_type="application/json-patch+json")
+
+
 def add_comment(item_id: int, text: str) -> dict:
     """Add a comment to a work item."""
     base = config.azure_base_url()
@@ -178,6 +202,8 @@ if __name__ == "__main__":
         _print_json(add_comment(int(sys.argv[2]), sys.argv[3]))
     elif cmd == "state" and len(sys.argv) >= 4:
         _print_json(update_work_item_state(int(sys.argv[2]), sys.argv[3]))
+    elif cmd == "assign" and len(sys.argv) >= 4:
+        _print_json(assign_work_item(int(sys.argv[2]), sys.argv[3]))
     elif cmd == "list":
         assignee = sys.argv[2] if len(sys.argv) >= 3 else ""
         _print_json(list_my_work_items(assignee))
