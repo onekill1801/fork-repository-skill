@@ -22,6 +22,18 @@ temp/                       # Output tạm (đã gitignore)
 
 Mỗi skill có: `SKILL.md` (trigger + workflow + routing) · `cookbook/` (chi tiết) · `prompts/` · `tools/` (Python).
 
+## Workspace đa project
+
+Repo này là **toolset dùng chung**, KHÔNG chứa code project. Code các project sống ở `~/work/`:
+- `~/work/projects.json` — registry: project → `{gitlab_project_id, azure_project, clone_dir, ...}`.
+- `~/work/<name>/` — bản clone của từng repo (vd `~/work/etask` = `idaas/etask`).
+- `~/work/proj.sh` — switcher cho terminal con người (`source` rồi `proj <name>`).
+
+Chuyển project = export `GITLAB_PROJECT_ID` / `AZURE_DEVOPS_PROJECT` (env đè `.env` — đã verify).
+Agent: đọc `projects.json`, **prefix env inline** mỗi lệnh, vd:
+`GITLAB_PROJECT_ID=5401 AZURE_DEVOPS_PROJECT=KYTA-all-in-one python3 gitlab_api.py list-mrs`.
+Chi tiết: `dev-automation/cookbook/multi-project.md`.
+
 ## Chạy tool Python
 
 - Tool **chỉ dùng stdlib** (`urllib`), không cần `pip install`.
