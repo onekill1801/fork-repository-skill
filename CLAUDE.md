@@ -24,10 +24,12 @@ Mỗi skill có: `SKILL.md` (trigger + workflow + routing) · `cookbook/` (chi t
 
 ## Workspace đa project
 
-Repo này là **toolset dùng chung**, KHÔNG chứa code project. Code các project sống ở `~/work/`:
-- `~/work/projects.json` — registry: project → `{gitlab_project_id, azure_project, clone_dir, ...}`.
-- `~/work/<name>/` — bản clone của từng repo (vd `~/work/etask` = `idaas/etask`).
-- `~/work/proj.sh` — switcher cho terminal con người (`source` rồi `proj <name>`).
+Repo này là **toolset dùng chung**. Workspace project sống ở `./work/` (trong repo, đã **gitignore** → thấy được nhưng không commit):
+- `./work/projects.json` — registry: project → `{gitlab_project_id, azure_project, clone_dir, stack, environments, ...}`.
+- `./work/<name>/` — bản clone của từng repo (vd `./work/etask` = `idaas/etask`).
+- `./work/proj.sh` — switcher cho terminal con người (`source` rồi `proj <name>`).
+
+> Tool đọc registry tại `<repo>/work/projects.json` (đè bằng env `WORK_DIR` nếu cần).
 
 Chuyển project = export `GITLAB_PROJECT_ID` / `AZURE_DEVOPS_PROJECT` (env đè `.env` — đã verify).
 Agent: đọc `projects.json`, **prefix env inline** mỗi lệnh, vd:
@@ -93,7 +95,21 @@ Khi tắt SSL verify → cảnh báo người dùng.
 - MR title: `<Type>: <Task Title>` (vd `Fix: NullPointerException in UserService`).
 - Code Java/Spring Boot: theo `dev-automation/cookbook/java-standards.md`.
 
-## Nền tảng
+## Nền tảng (cross-platform: Windows · macOS · Ubuntu)
 
-- `fork_terminal.py`: hỗ trợ Windows (`cmd /k`), macOS (AppleScript), Linux (gnome-terminal/xterm).
-- Môi trường chính: Windows + PowerShell.
+Toolkit chạy trên cả 3 OS. Kiểm tra mức sẵn sàng của máy:
+```
+python dev-automation/tools/doctor.py        # (hoặc python3) — báo OS, Python, CLI có/thiếu, feature nào chạy được
+```
+
+- **Python**: `python` (Windows) · `python3` (macOS/Linux). Tool chỉ dùng **stdlib**, không pip.
+- **UTF-8**: mọi tool tự ép stdout về UTF-8 (qua `config.py` / `probe_common.py`) → in tên/nội dung
+  tiếng Việt không crash trên console Windows cp1252. Phòng hờ có thể đặt env `PYTHONUTF8=1`.
+- **Đường dẫn**: dùng `os.path` (không hardcode `/` hay `\`); registry/`clone_dir` là dữ liệu máy-cụ-thể.
+- **Tool thuần stdlib (urllib/socket) → chạy mọi OS, chỉ cần token**: azure/gitlab/notifier, etask,
+  `probe_api/redis/kafka`, `jenkins`, `kafka_ui`, `flow_check`, `run_log`, `postman_gen`.
+- **Tool wrap CLI ngoài (cần cài trên máy)**: `test_runner` (mvn/gradle/npm/go/pytest theo project),
+  `probe_db` (psql/mysql), bước commit/push (git). `doctor.py` cho biết cái nào thiếu.
+- `fork_terminal.py`: Windows (`cmd /k`), macOS (`osascript`/AppleScript), Linux (gnome-terminal/
+  x-terminal-emulator/xterm — tự dò).
+- Môi trường phát triển chính: Windows + PowerShell; đã thiết kế để dev/CI trên macOS/Ubuntu chạy như nhau.

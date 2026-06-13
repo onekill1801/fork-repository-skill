@@ -8,6 +8,7 @@
 | **dev-automation** | "review MR", "fix bug", "list my tasks", Azure DevOps + GitLab workflows |
 | **skill-scaffold** | "extract tools", "scaffold skill" — import app tools into new skills |
 | **etask-automation** | "create task", "search tasks", "my tasks", "show statistics", "list projects" — FIS eTask platform |
+| **fpt-chat-automation** | "fpt chat", "list my conversations", "fpt chat todos", "đọc tin nhắn fpt chat" — read-only FPT Chat REST (conversations, messages, todos, directory) |
 
 ## Slash commands (`.claude/commands/`)
 
@@ -28,6 +29,7 @@
 | `/etask-create <name> [list_id]` | Create a new eTask task |
 | `/etask-projects [filter]` | Browse eTask projects, sprints, and workspaces |
 | `/etask-stats [scope]` | Show eTask analytics and statistics |
+| `/fpt-chat` | FPT Chat: list conversations + todos overview (read-only) |
 
 Skills run automatically from natural language. Slash commands run the same workflows explicitly.
 

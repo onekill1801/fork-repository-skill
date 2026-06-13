@@ -138,5 +138,8 @@ cython_debug/
 # Temporary files
 temp/
 
+# Multi-project registry (machine-specific paths / endpoints — visible in tree, not committed)
+work/
+
 # macOS
 .DS_Store

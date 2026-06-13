@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run
+#!/usr/bin/env python3
 """Fork a new terminal window with a command."""
 
 import os

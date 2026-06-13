@@ -10,6 +10,16 @@ Usage:
 
 import os
 import re
+import sys
+
+# Cross-platform: force UTF-8 stdout/stderr so JSON output with non-ASCII (Vietnamese
+# task names, comments) doesn't crash on a Windows cp1252/cp437 console. Runs once on
+# import; every etask tool imports this via client.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 _ENV_LOADED = False
 
