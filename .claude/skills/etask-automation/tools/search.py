@@ -29,7 +29,7 @@ import config
 # ── Search wrappers ────────────────────────────────────────────────────────────
 
 def search_tasks(query=None, list_task_id=None, project_id=None,
-                 status=None, priority=None, assignee_ids=None,
+                 status=None, status_type=None, priority=None, assignee_ids=None,
                  created_by=None, date_start=None, date_end=None,
                  page=0, size=20, sort_by="sortOrder", sort_order="asc") -> dict:
     args = {"page": page, "size": size, "sort_by": sort_by, "sort_order": sort_order}
@@ -41,6 +41,8 @@ def search_tasks(query=None, list_task_id=None, project_id=None,
         args["project_id"] = project_id
     if status:
         args["status"] = status if isinstance(status, list) else status.split(",")
+    if status_type:
+        args["status_type"] = status_type if isinstance(status_type, list) else status_type.split(",")
     if priority:
         args["priority"] = priority if isinstance(priority, list) else priority.split(",")
     if assignee_ids:
@@ -58,7 +60,7 @@ def search_tasks(query=None, list_task_id=None, project_id=None,
 
 
 def search_my_assigned_tasks(query=None, list_task_id=None, project_id=None,
-                              status=None, date_start=None, date_end=None,
+                              status=None, status_type=None, date_start=None, date_end=None,
                               page=0, size=20) -> dict:
     args = {"page": page, "size": size}
     if query:
@@ -69,6 +71,8 @@ def search_my_assigned_tasks(query=None, list_task_id=None, project_id=None,
         args["project_id"] = project_id
     if status:
         args["status"] = status if isinstance(status, list) else status.split(",")
+    if status_type:
+        args["status_type"] = status_type if isinstance(status_type, list) else status_type.split(",")
     if date_start:
         args["date_start"] = date_start
     if date_end:
@@ -78,13 +82,15 @@ def search_my_assigned_tasks(query=None, list_task_id=None, project_id=None,
     return r
 
 
-def search_dashboard_tasks(workspace_id: str, query=None, status=None,
+def search_dashboard_tasks(workspace_id: str, query=None, status=None, status_type=None,
                             page=0, size=20) -> dict:
     args = {"workspace_id": workspace_id, "page": page, "size": size}
     if query:
         args["query"] = query
     if status:
         args["status"] = status if isinstance(status, list) else status.split(",")
+    if status_type:
+        args["status_type"] = status_type if isinstance(status_type, list) else status_type.split(",")
     r = client.execute_tool("search_dashboard_tasks", args)
     client.check_error(r, "search_dashboard_tasks")
     return r
@@ -121,6 +127,8 @@ if __name__ == "__main__":
         parser.add_argument("--list", dest="list_task_id", default=None)
         parser.add_argument("--project", dest="project_id", default=None)
         parser.add_argument("--status", default=None, help="Comma-separated status IDs")
+        parser.add_argument("--status-type", dest="status_type", default=None,
+                            help="Comma-separated status groups: todo,processing,approved,completed,closed,custom")
         parser.add_argument("--priority", default=None, help="Comma-separated priority values")
         parser.add_argument("--created-by", default=None)
         parser.add_argument("--start", dest="date_start", default=None)
@@ -132,7 +140,7 @@ if __name__ == "__main__":
         args = parser.parse_args(sys.argv[2:])
         client.print_json(search_tasks(
             args.query, args.list_task_id, args.project_id,
-            args.status, args.priority, None,
+            args.status, args.status_type, args.priority, None,
             args.created_by, args.date_start, args.date_end,
             args.page, args.size, args.sort_by, args.sort_order
         ))
@@ -143,6 +151,8 @@ if __name__ == "__main__":
         parser.add_argument("--list", dest="list_task_id", default=None)
         parser.add_argument("--project", dest="project_id", default=None)
         parser.add_argument("--status", default=None)
+        parser.add_argument("--status-type", dest="status_type", default=None,
+                            help="Comma-separated status groups: todo,processing,approved,completed,closed,custom")
         parser.add_argument("--start", dest="date_start", default=None)
         parser.add_argument("--end", dest="date_end", default=None)
         parser.add_argument("--page", type=int, default=0)
@@ -150,7 +160,7 @@ if __name__ == "__main__":
         args = parser.parse_args(sys.argv[2:])
         client.print_json(search_my_assigned_tasks(
             args.query, args.list_task_id, args.project_id,
-            args.status, args.date_start, args.date_end,
+            args.status, args.status_type, args.date_start, args.date_end,
             args.page, args.size
         ))
 
@@ -159,11 +169,13 @@ if __name__ == "__main__":
         parser.add_argument("workspace_id")
         parser.add_argument("--query", default=None)
         parser.add_argument("--status", default=None)
+        parser.add_argument("--status-type", dest="status_type", default=None,
+                            help="Comma-separated status groups: todo,processing,approved,completed,closed,custom")
         parser.add_argument("--page", type=int, default=0)
         parser.add_argument("--size", type=int, default=20)
         args = parser.parse_args(sys.argv[2:])
         client.print_json(search_dashboard_tasks(
-            args.workspace_id, args.query, args.status, args.page, args.size
+            args.workspace_id, args.query, args.status, args.status_type, args.page, args.size
         ))
 
     elif cmd == "candidates":

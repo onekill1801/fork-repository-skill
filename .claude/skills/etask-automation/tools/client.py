@@ -97,8 +97,14 @@ def print_json(data):
     sys.stdout.buffer.write(b"\n")
 
 
-def check_error(result: dict, tool_name: str):
-    """Print error and exit(1) if result contains an error flag."""
+def check_error(result, tool_name: str):
+    """Print error and exit(1) if result contains an error flag.
+
+    A non-dict result (e.g. a JSON list of PATs) is a successful data payload,
+    not an error envelope — nothing to check.
+    """
+    if not isinstance(result, dict):
+        return
     if result.get("error") or result.get("success") is False:
         code = result.get("errorCode") or result.get("status") or "ERROR"
         msg = result.get("errorMessage") or result.get("message") or str(result)

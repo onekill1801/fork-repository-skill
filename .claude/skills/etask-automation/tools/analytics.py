@@ -15,6 +15,14 @@ Usage:
   python3 analytics.py finish-rates [--dept DEPT] [--start ISO] [--end ISO]
   python3 analytics.py unassigned [--list LIST_ID] [--start ISO] [--end ISO]
   python3 analytics.py history [--scope my|org] [--page N] [--size N]
+  python3 analytics.py my-dashboard [--start ISO] [--end ISO] [--day-left N]
+  python3 analytics.py org-dashboard [--org ORG] [--start ISO] [--end ISO]
+  python3 analytics.py user-dashboard <user_id> [--org ORG] [--start ISO] [--end ISO] [--day-left N]
+  python3 analytics.py project-dashboard <project_id> [--start ISO] [--end ISO] [--day-left N]
+  python3 analytics.py workload [--org ORG] [--q TEXT] [--start ISO] [--end ISO] [--page N] [--size N]
+  python3 analytics.py by-metric --scope my|org|user|project --metric total|overdue|expiringSoon|urgent|completed|inProgress
+                                 [--ref-id ID] [--org ORG] [--start ISO] [--end ISO] [--page N] [--size N]
+  python3 analytics.py recent [--scope my|org] [--size N] [--org ORG]
 """
 
 import argparse
@@ -136,6 +144,71 @@ def get_recent_task_history(scope_type="my", page=0, size=20) -> dict:
     return r
 
 
+# ── Dashboard summaries & drill-down (added for backend Phase 6 / scoring update) ──
+
+def _opt(args: dict, **kv) -> dict:
+    for k, v in kv.items():
+        if v is not None:
+            args[k] = v
+    return args
+
+
+def get_my_dashboard_summary(date_start=None, date_end=None, day_left=3) -> dict:
+    r = client.execute_tool("get_my_dashboard_summary",
+                            _opt({"day_left": day_left}, date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_my_dashboard_summary")
+    return r
+
+
+def get_org_dashboard_summary(org=None, date_start=None, date_end=None) -> dict:
+    r = client.execute_tool("get_org_dashboard_summary",
+                            _opt({}, org=org, date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_org_dashboard_summary")
+    return r
+
+
+def get_user_dashboard_summary(user_id: int, org=None, date_start=None, date_end=None, day_left=3) -> dict:
+    r = client.execute_tool("get_user_dashboard_summary",
+                            _opt({"user_id": user_id, "day_left": day_left},
+                                 org=org, date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_user_dashboard_summary")
+    return r
+
+
+def get_project_dashboard_summary(project_id: str, date_start=None, date_end=None, day_left=3) -> dict:
+    r = client.execute_tool("get_project_dashboard_summary",
+                            _opt({"project_id": project_id, "day_left": day_left},
+                                 date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_project_dashboard_summary")
+    return r
+
+
+def get_org_workload(org=None, q=None, date_start=None, date_end=None, page=0, size=20) -> dict:
+    r = client.execute_tool("get_org_workload",
+                            _opt({"page": page, "size": size},
+                                 org=org, q=q, date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_org_workload")
+    return r
+
+
+def get_tasks_by_metric(scope: str, metric: str, ref_id=None, org=None,
+                        date_start=None, date_end=None, day_left=3, page=0, size=20) -> dict:
+    r = client.execute_tool("get_tasks_by_metric",
+                            _opt({"scope": scope, "metric": metric, "day_left": day_left,
+                                  "page": page, "size": size},
+                                 ref_id=ref_id, org=org, date_start=date_start, date_end=date_end))
+    client.check_error(r, "get_tasks_by_metric")
+    return r
+
+
+def get_recent_tasks(scope_type="my", size=3, org=None, date_start=None, date_end=None, day_left=None) -> dict:
+    r = client.execute_tool("get_recent_tasks",
+                            _opt({"scope_type": scope_type, "size": size},
+                                 org=org, date_start=date_start, date_end=date_end, day_left=day_left))
+    client.check_error(r, "get_recent_tasks")
+    return r
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -224,6 +297,80 @@ if __name__ == "__main__":
         parser.add_argument("--size", type=int, default=20)
         args = parser.parse_args(sys.argv[2:])
         client.print_json(get_recent_task_history(args.scope, args.page, args.size))
+
+    elif cmd == "my-dashboard":
+        parser = argparse.ArgumentParser(prog="analytics.py my-dashboard")
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--day-left", type=int, default=3)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_my_dashboard_summary(args.date_start, args.date_end, args.day_left))
+
+    elif cmd == "org-dashboard":
+        parser = argparse.ArgumentParser(prog="analytics.py org-dashboard")
+        parser.add_argument("--org", default=None)
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_org_dashboard_summary(args.org, args.date_start, args.date_end))
+
+    elif cmd == "user-dashboard":
+        parser = argparse.ArgumentParser(prog="analytics.py user-dashboard")
+        parser.add_argument("user_id", type=int)
+        parser.add_argument("--org", default=None)
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--day-left", type=int, default=3)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_user_dashboard_summary(args.user_id, args.org, args.date_start, args.date_end, args.day_left))
+
+    elif cmd == "project-dashboard":
+        parser = argparse.ArgumentParser(prog="analytics.py project-dashboard")
+        parser.add_argument("project_id")
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--day-left", type=int, default=3)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_project_dashboard_summary(args.project_id, args.date_start, args.date_end, args.day_left))
+
+    elif cmd == "workload":
+        parser = argparse.ArgumentParser(prog="analytics.py workload")
+        parser.add_argument("--org", default=None)
+        parser.add_argument("--q", default=None)
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--page", type=int, default=0)
+        parser.add_argument("--size", type=int, default=20)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_org_workload(args.org, args.q, args.date_start, args.date_end, args.page, args.size))
+
+    elif cmd == "by-metric":
+        parser = argparse.ArgumentParser(prog="analytics.py by-metric")
+        parser.add_argument("--scope", required=True, choices=["my", "org", "user", "project"])
+        parser.add_argument("--metric", required=True,
+                            choices=["total", "overdue", "expiringSoon", "urgent", "completed", "inProgress"])
+        parser.add_argument("--ref-id", dest="ref_id", default=None, help="userId or projectId for scope=user|project")
+        parser.add_argument("--org", default=None)
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--day-left", type=int, default=3)
+        parser.add_argument("--page", type=int, default=0)
+        parser.add_argument("--size", type=int, default=20)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_tasks_by_metric(args.scope, args.metric, args.ref_id, args.org,
+                                               args.date_start, args.date_end, args.day_left, args.page, args.size))
+
+    elif cmd == "recent":
+        parser = argparse.ArgumentParser(prog="analytics.py recent")
+        parser.add_argument("--scope", dest="scope_type", default="my", choices=["my", "org"])
+        parser.add_argument("--size", type=int, default=3)
+        parser.add_argument("--org", default=None)
+        parser.add_argument("--start", dest="date_start", default=None)
+        parser.add_argument("--end", dest="date_end", default=None)
+        parser.add_argument("--day-left", dest="day_left", type=int, default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(get_recent_tasks(args.scope_type, args.size, args.org,
+                                            args.date_start, args.date_end, args.day_left))
 
     else:
         print(f"Unknown command: {cmd}\n", file=sys.stderr)

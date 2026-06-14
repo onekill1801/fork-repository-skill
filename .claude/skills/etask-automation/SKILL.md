@@ -31,8 +31,9 @@ source before first use to understand exact function signatures.
 | `tools/tasks.py` | Task CRUD: get, query, create, update, delete, complete, move, sprint ops |
 | `tools/checklists.py` | Checklist items, comments, and file attachments |
 | `tools/projects.py` | Projects, sprints, workspaces, lists/boards |
-| `tools/search.py` | Elasticsearch-backed task search (full-text + filters) |
-| `tools/analytics.py` | Dashboard statistics, trends, overdue, finish rates |
+| `tools/search.py` | Elasticsearch-backed task search (full-text + filters, incl. `--status-type`) |
+| `tools/analytics.py` | Statistics, trends, overdue, finish rates + dashboard summaries / workload / drill-down |
+| `tools/governed_search.py` | Safe DSL query (`governed_search`) — whitelisted entity/field/op, read-only |
 | `tools/auth.py` | PAT management (list/revoke — create requires session JWT) |
 
 ## Workflows
@@ -116,6 +117,21 @@ source before first use to understand exact function signatures.
    - Finish rates: `python3 analytics.py finish-rates`
    - Unassigned count: `python3 analytics.py unassigned [--list LIST_ID]`
    - Activity history: `python3 analytics.py history [--scope my|org]`
+   - **Dashboard summary (cá nhân/tổ chức/user/project):** `python3 analytics.py my-dashboard` ·
+     `org-dashboard [--org ORG]` · `user-dashboard <user_id>` · `project-dashboard <project_id>`
+   - **Workload theo nhân sự:** `python3 analytics.py workload [--org ORG] [--q TEXT]`
+   - **Drill-down 1 metric:** `python3 analytics.py by-metric --scope my|org|user|project --metric overdue|expiringSoon|urgent|completed|inProgress [--ref-id ID]`
+   - **Task gần đây:** `python3 analytics.py recent [--scope my|org] [--size N]`
+
+### Workflow 6: Governed Search _(read-only, an toàn)_
+
+DSL query có kiểm soát — chỉ entity/field/op nằm trong whitelist server (task: status, priority,
+listTaskId, parentId, name, startDate, dueDate). Server inject tenant + ép LIMIT, không gửi SQL thô.
+```
+python3 governed_search.py search --entity task --filter "priority:IN:HIGH,URGENT" --limit 50
+python3 governed_search.py search --entity task --filter "name:CONTAINS:report"
+```
+Field/op ngoài whitelist → server trả `GOVERNED_QUERY_REJECTED` (dùng để biết cái gì được phép).
 
 ## Routing Rules
 

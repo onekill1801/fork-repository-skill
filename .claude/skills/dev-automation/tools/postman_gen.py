@@ -231,9 +231,14 @@ def main() -> int:
         print(json.dumps({"error": True, "message": f"src not found: {src}"}))
         return 1
 
+    # Skip build output / generated / VCS dirs — only scan real source. Otherwise
+    # mvn/gradle target dirs (generated MapStruct/JPA-metamodel .java) inflate counts.
+    skip_dirs = {"target", "build", "out", "dist", "bin", ".git", ".gradle",
+                 ".idea", ".mvn", "node_modules", "generated-sources", "generated-test-sources"}
     controllers = []
     scanned = 0
-    for root, _, files in os.walk(src):
+    for root, dirs, files in os.walk(src):
+        dirs[:] = [d for d in dirs if d not in skip_dirs]
         for fn in files:
             if not fn.endswith(".java"):
                 continue
