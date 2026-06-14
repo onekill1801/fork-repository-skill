@@ -84,7 +84,8 @@ python todos.py delete --id TODO_ID [--yes]                                  # [
 python send.py text   --group ID --content "..." [--group-type TYPE] [--yes] # [WRITE] send message over WS; dry-run without --yes
 python send.py recall --group ID --inc MESSAGE_ID_INC [--yes]                # [WRITE] recall (delete for everyone); dry-run without --yes
 
-python listen.py [--reply claude|notify|off] [--cooldown 30]                 # long-running: listen for incoming messages
+python listen.py [--reply claude|notify|off]   # long-running: route incoming msgs; DM -> per-conversation worker terminal
+python reply_worker.py <group_id>              # (auto-launched by listen.py) per-conversation auto-reply worker
 python auth.py refresh | token-status                                        # token mgmt (auto-refresh is automatic)
 ```
 
@@ -100,18 +101,30 @@ python common.py settings | notification-setting | stickers
 All tools print JSON; errors print `{"error": true, "status": ..., "message": ...}`
 to stdout and exit non-zero — read and handle, don't treat as a crash.
 
-## Listener (auto-reply to DMs)
+## Listener + auto-reply (one terminal per conversation)
 
-`listen.py` keeps a realtime WS connection and watches incoming messages:
-- **Direct (1-1) messages from others** → writes a context file to
-  `temp/fchat_incoming/` and **forks a `claude` terminal** (Pro subscription, no
-  API key — via the `fork-terminal` tool) to draft & send a reply through `send.py`.
+`listen.py` keeps a realtime WS connection and routes incoming messages:
+- **Direct (1-1) from others** → appended to a per-conversation queue
+  (`temp/fchat_incoming/queue_<gid>.jsonl`). If no worker is alive for that
+  conversation, it opens **one terminal** running `reply_worker.py <gid>`;
+  otherwise the already-open worker picks the message up. So each person/group =
+  **one terminal**, reused for the whole back-and-forth.
 - **Group messages** → logged only, never auto-replied.
-- Own messages / typing / seen → ignored (the `senderId == me` filter prevents reply loops).
-- E2E-encrypted DM content is detected and flagged "unreadable" (no plaintext reply).
+- Own messages / typing / seen → ignored (`senderId == me` prevents reply loops).
 
-Modes: `--reply claude` (default, spawn Claude), `--reply notify` (just print),
-`--reply off` (log only). `--cooldown N` throttles spawns per conversation.
+`reply_worker.py` (per conversation, in its own terminal):
+- **Debounce:** after a message it waits `FCHAT_REPLY_DEBOUNCE` seconds (default 10)
+  of silence so the other person can finish; consecutive messages are then answered
+  with **one combined reply**.
+- Fetches the **conversation history** (labelled `[Tôi]` vs the other person) and
+  asks `claude -p --model sonnet` (Pro subscription, no API key) to draft a reply
+  **in your style**.
+- Shows the draft and asks **`Gửi? [y/N]`** — sends via `send.py` only on `y`.
+- E2E-encrypted messages are flagged unreadable and skipped.
+- Exits & cleans up **15 minutes** after the last message (lock + queue removed).
+
+Listener modes: `--reply claude` (default), `--reply notify` (print only),
+`--reply off` (log only). Reply model: env `FCHAT_REPLY_MODEL` (default `sonnet`).
 Heartbeat + auto-reconnect + token refresh are built in. Stop with Ctrl+C.
 
 ## Workflows

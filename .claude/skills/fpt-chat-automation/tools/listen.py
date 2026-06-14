@@ -27,6 +27,7 @@ import json
 import os
 import re
 import socket
+import subprocess
 import sys
 import time
 
@@ -35,8 +36,11 @@ import config
 import tokens
 import ws_client
 
-# import the existing fork-terminal tool (cross-platform terminal spawner)
-_FT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "fork-terminal", "tools"))
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "..", ".."))
+
+# import the existing fork-terminal tool (used on macOS/Linux)
+_FT_DIR = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "fork-terminal", "tools"))
 sys.path.insert(0, _FT_DIR)
 try:
     import fork_terminal  # noqa: E402
@@ -44,8 +48,7 @@ except Exception:
     fork_terminal = None
 
 # context files for forked Claude sessions live in gitignored temp/
-_INBOX = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..",
-                                      "temp", "fchat_incoming"))
+_INBOX = os.path.join(REPO_ROOT, "temp", "fchat_incoming")
 
 
 def _now():
@@ -58,58 +61,81 @@ def _looks_encrypted(text) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9+/=]+", text))
 
 
-def _write_context(data, sender_name, encrypted) -> str:
-    os.makedirs(_INBOX, exist_ok=True)
-    gid = data.get("groupId")
-    inc = data.get("messageIdInc")
-    group = data.get("group") or {}
-    gtype = group.get("type") or group.get("groupType") or "SUPER_PRIVATE"
-    path = os.path.join(_INBOX, f"dm_{gid}_{inc}.md")
-    content = data.get("content")
-    body = f"""# Tin nhắn riêng (DM) trên FPT Chat cần trả lời
+def _fetch_history(gid, me, limit=40):
+    """Recent TEXT messages in this conversation, oldest->newest, labelled.
 
-- Người gửi: **{sender_name}** (`{data.get('senderId')}`)
-- groupId: `{gid}`
-- groupType: `{gtype}`
-- messageIdInc: {inc}
-- Thời gian: {data.get('createdAt')}
-- Mã hoá E2E: {"CÓ — nội dung dưới là ciphertext, KHÔNG đọc được" if encrypted else "không"}
-
-## Nội dung
-```
-{content}
-```
-
-## Việc cần làm
-1. Đọc nội dung trên. {"Vì tin bị mã hoá E2E, hãy báo người dùng là không đọc được và DỪNG (đừng gửi gì)." if encrypted else "Soạn một câu trả lời phù hợp, lịch sự, đúng ngữ cảnh."}
-2. Gửi trả lời bằng skill fpt-chat-automation:
-   ```
-   cd .claude/skills/fpt-chat-automation/tools
-   python send.py text --group {gid} --content "<câu trả lời>" --group-type {gtype} --yes
-   ```
-3. Hỏi xác nhận của người dùng trước khi chạy lệnh có `--yes` (đây là tin gửi cho người thật).
-"""
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(body)
-    return path
+    'Tôi' = the account owner's own messages (so Claude can mimic their style);
+    everyone else by display name. Encrypted content shows as a placeholder.
+    """
+    r = client.api_get(f"/message-query/group/{gid}/message", {"limit": limit})
+    if not isinstance(r, dict) or r.get("error"):
+        return []
+    lines = []
+    for m in sorted(r.get("regulars") or [], key=lambda x: x.get("messageIdInc") or 0):
+        if m.get("type") != "TEXT":
+            continue
+        c = m.get("content")
+        if not c:
+            continue
+        if _looks_encrypted(c):
+            c = "<đã mã hoá>"
+        elif len(c) > 400:
+            c = c[:400] + "…"
+        who = "Tôi" if m.get("senderId") == me else ((m.get("user") or {}).get("displayName") or "Họ")
+        lines.append(f"[{who}] {c}")
+    return lines
 
 
-def _spawn_claude(ctx_path):
-    if fork_terminal is None:
-        print(f"[{_now()}] [WARN] fork-terminal not available; context written to {ctx_path}",
-              file=sys.stderr)
-        return
-    # minimal ASCII command -> avoids quoting/encoding pitfalls; instructions live in the file
-    cmd = f'claude "Read and follow the reply instructions in {ctx_path}"'
+def _qpath(gid):
+    return os.path.join(_INBOX, f"queue_{gid}.jsonl")
+
+
+def _lockpath(gid):
+    return os.path.join(_INBOX, f"worker_{gid}.lock")
+
+
+def _worker_alive(gid) -> bool:
+    """A worker owns this conversation if its lock heartbeat is recent (<90s)."""
+    p = _lockpath(gid)
+    if not os.path.isfile(p):
+        return False
     try:
-        fork_terminal.fork_terminal(cmd)
-        print(f"[{_now()}] -> spawned Claude terminal to reply ({ctx_path})")
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return (time.time() - d.get("heartbeat", 0)) < 90
+    except Exception:
+        return False
+
+
+def _enqueue(gid, ev, fresh=False):
+    os.makedirs(_INBOX, exist_ok=True)
+    with open(_qpath(gid), "w" if fresh else "a", encoding="utf-8") as f:
+        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+
+
+def _spawn_worker(gid):
+    """Open a terminal running reply_worker.py for this conversation."""
+    worker = os.path.normpath(os.path.join(TOOLS_DIR, "reply_worker.py"))
+    py = "python" if os.name == "nt" else "python3"
+    try:
+        if os.name == "nt":  # avoid fork_terminal (its `start ... && ...` drops the command)
+            launcher = os.path.normpath(os.path.join(_INBOX, f"launch_{gid}.cmd"))
+            with open(launcher, "w", encoding="utf-8") as f:
+                f.write("@echo off\r\n")
+                f.write(f'cd /d "{os.path.normpath(TOOLS_DIR)}"\r\n')
+                f.write(f'{py} "{worker}" {gid}\r\n')
+            subprocess.Popen(f'start "FPT Chat: {gid}" cmd /k "{launcher}"', shell=True)
+        elif fork_terminal is not None:
+            fork_terminal.fork_terminal(f'cd "{TOOLS_DIR}" && {py} reply_worker.py {gid}')
+        else:
+            print(f"[{_now()}] [WARN] no terminal spawner available", file=sys.stderr)
+            return
+        print(f"[{_now()}]        -> mở worker terminal cho hội thoại {gid}")
     except Exception as e:
-        print(f"[{_now()}] [WARN] could not spawn terminal: {e}; context at {ctx_path}",
-              file=sys.stderr)
+        print(f"[{_now()}] [WARN] không mở được worker: {e}", file=sys.stderr)
 
 
-def handle_message(obj, me, reply_mode, cooldown, seen, last_spawn):
+def handle_message(obj, me, reply_mode, seen):
     data = obj.get("data") or {}
     if data.get("type") != "TEXT":
         return
@@ -138,27 +164,27 @@ def handle_message(obj, me, reply_mode, cooldown, seen, last_spawn):
     shown = "<E2E ciphertext>" if enc else repr(content)
     print(f"[{_now()}] [DM]    {sender_name}: {shown}")
 
-    if reply_mode == "off":
+    if reply_mode in ("off", "notify"):
         return
-    if reply_mode == "notify":
-        return
-    # reply_mode == "claude"
-    now = time.time()
-    if cooldown and (now - last_spawn.get(gid, 0)) < cooldown:
-        print(f"[{_now()}]        (trong cooldown {cooldown}s — bỏ qua spawn, đã log)")
-        return
-    last_spawn[gid] = now
-    ctx = _write_context(data, sender_name, enc)
-    _spawn_claude(ctx)
+    # reply_mode == "claude": route to a per-conversation worker terminal
+    ev = {"messageIdInc": inc, "senderId": sender, "senderName": sender_name,
+          "content": content, "groupType": group.get("type") or group.get("groupType") or "SUPER_PRIVATE",
+          "encrypted": enc, "ts": int(time.time())}
+    if _worker_alive(gid):
+        _enqueue(gid, ev)                       # existing terminal picks it up
+        print(f"[{_now()}]        -> đưa vào worker đang mở")
+    else:
+        _enqueue(gid, ev, fresh=True)           # new session: reset the queue
+        _spawn_worker(gid)
 
 
-def run(reply_mode, cooldown, idle_ping=20):
+def run(reply_mode, idle_ping=20):
     me = client.api_get("/user/me").get("id")
     if not me:
         print("[ERROR] cannot resolve current user (token invalid?)", file=sys.stderr)
         sys.exit(1)
     print(f"[{_now()}] listening as {me} | reply={reply_mode} | Ctrl+C to stop")
-    seen, last_spawn = set(), {}
+    seen = set()
     backoff = 2
 
     while True:
@@ -186,7 +212,7 @@ def run(reply_mode, cooldown, idle_ping=20):
                 except Exception:
                     obj = None
                 if isinstance(obj, dict) and obj.get("type") == "message":
-                    handle_message(obj, me, reply_mode, cooldown, seen, last_spawn)
+                    handle_message(obj, me, reply_mode, seen)
                 if time.time() - last_ping > idle_ping:
                     ws.send_text("ping")
                     last_ping = time.time()
@@ -209,10 +235,8 @@ if __name__ == "__main__":
         sys.exit(1)
     p = argparse.ArgumentParser(prog="listen.py")
     p.add_argument("--reply", choices=["claude", "notify", "off"], default="claude")
-    p.add_argument("--cooldown", type=int, default=30,
-                   help="min seconds between Claude spawns per conversation")
     a = p.parse_args()
     try:
-        run(a.reply, a.cooldown)
+        run(a.reply)
     except KeyboardInterrupt:
         print("\nstopped.")
