@@ -7,17 +7,32 @@ Find, browse, and inspect tasks in eTask — read-only operations, no risk of da
 - `.env` has `ETASK_BASE_URL` and `ETASK_PAT_TOKEN`
 - Run `python3 config.py` to verify; run from `tools/` directory
 
+## Output shaping (read this first)
+
+List/read tools default to a lean **`summary`** view — ~6KB for 30 tasks instead of ~1.9MB of raw
+JSON. Status is shown via `statusType` (Chưa làm / Đang làm / Đã duyệt / Hoàn thành / Đã đóng), not
+the opaque per-list status ID.
+
+- `--format summary` (default for lists) — compact block per task.
+- `--format table [--fields id,name,status,due,priority,project]` — aligned columns; pick your own.
+- `--format json` — full raw record (every field; use when you need `assignTaskList`, `orgIn`, etc.).
+- `tasks.py get <id>` defaults to `json` (a single record is small and you usually want full detail).
+
+Applies to: `search.py` tasks/my-tasks/dashboard/candidates · `tasks.py` query/subtasks/by-sprint.
+
 ## Steps
 
 ### 1. Find my assigned tasks (quickest start)
 ```bash
 cd .claude/skills/etask-automation/tools
-python3 search.py my-tasks
+python3 search.py my-tasks                       # lean summary (default)
+python3 search.py my-tasks --format table        # aligned columns
 ```
 Optionally filter:
 ```bash
 python3 search.py my-tasks --status OPEN,IN_PROGRESS --size 50
 python3 search.py my-tasks --query "payment" --start 2026-01-01T00:00:00Z
+python3 search.py my-tasks --format table --fields id,name,status,due,project
 ```
 
 ### 2. Broad task search (all accessible tasks)
@@ -40,9 +55,17 @@ python3 tasks.py subtasks <parent_task_id>
 ### 5. Query all tasks in a specific list/board
 ```bash
 python3 tasks.py query <list_task_id>
-python3 tasks.py query <list_task_id> --status OPEN
+python3 tasks.py query <list_task_id> --status <status_id>      # status_id = a per-list group_task id
 python3 tasks.py query <list_task_id> --parent <parent_id>
+python3 tasks.py query <list_task_id> --page 0 --size 50        # paginated (server caps size at 200)
 ```
+> Paginated server-side: response is `{data, page, size, totalRecords, totalPages}` (same shape as
+> search). `get_comments`/`get_checklists` are paginated too (`page`/`size`, default 50).
+> ⚠️ `--status` here is a **per-list status ID** (a `group_task` id like `00002qOI...`), NOT a literal
+> like `OPEN`/`DONE` (those never match → empty result). For status-**group** filtering
+> (todo/processing/approved/completed/closed) use `search.py my-tasks/tasks --status-type ...` instead.
+> `query`/`subtasks`/`by-sprint`/`get` resolve the status into a readable `statusName`/`statusType`
+> (once the backend change ships), so the summary view no longer shows a bare `[-]`.
 
 ### 6. Get tasks in a sprint
 ```bash

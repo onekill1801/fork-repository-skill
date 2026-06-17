@@ -24,6 +24,7 @@ import sys
 
 import client
 import config
+import view
 
 
 # ── Tool wrappers ──────────────────────────────────────────────────────────────
@@ -34,12 +35,17 @@ def get_task(task_id: str) -> dict:
     return result
 
 
-def query_tasks(list_task_id: str, status: str = None, parent_id: str = None) -> dict:
+def query_tasks(list_task_id: str, status: str = None, parent_id: str = None,
+                page: int = None, size: int = None) -> dict:
     args = {"list_task_id": list_task_id}
     if status:
         args["status"] = status
     if parent_id:
         args["parent_id"] = parent_id
+    if page is not None:
+        args["page"] = page
+    if size is not None:
+        args["size"] = size
     result = client.execute_tool("query_tasks", args)
     client.check_error(result, "query_tasks")
     return result
@@ -138,22 +144,28 @@ if __name__ == "__main__":
     if cmd == "get":
         parser = argparse.ArgumentParser(prog="tasks.py get")
         parser.add_argument("task_id")
+        view.add_view_args(parser, default_format="json")
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(get_task(args.task_id))
+        view.emit(get_task(args.task_id), args.format, view.parse_fields(args.fields))
 
     elif cmd == "query":
         parser = argparse.ArgumentParser(prog="tasks.py query")
         parser.add_argument("list_task_id")
         parser.add_argument("--status", default=None)
         parser.add_argument("--parent", default=None)
+        parser.add_argument("--page", type=int, default=None)
+        parser.add_argument("--size", type=int, default=None)
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(query_tasks(args.list_task_id, args.status, args.parent))
+        view.emit(query_tasks(args.list_task_id, args.status, args.parent, args.page, args.size),
+                  args.format, view.parse_fields(args.fields))
 
     elif cmd == "subtasks":
         parser = argparse.ArgumentParser(prog="tasks.py subtasks")
         parser.add_argument("parent_task_id")
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(get_subtasks(args.parent_task_id))
+        view.emit(get_subtasks(args.parent_task_id), args.format, view.parse_fields(args.fields))
 
     elif cmd == "create":
         parser = argparse.ArgumentParser(prog="tasks.py create")
@@ -214,8 +226,9 @@ if __name__ == "__main__":
     elif cmd == "by-sprint":
         parser = argparse.ArgumentParser(prog="tasks.py by-sprint")
         parser.add_argument("sprint_id")
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(get_tasks_by_sprint(args.sprint_id))
+        view.emit(get_tasks_by_sprint(args.sprint_id), args.format, view.parse_fields(args.fields))
 
     else:
         print(f"Unknown command: {cmd}\n", file=sys.stderr)

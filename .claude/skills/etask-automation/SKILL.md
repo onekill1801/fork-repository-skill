@@ -32,6 +32,7 @@ source before first use to understand exact function signatures.
 | `tools/checklists.py` | Checklist items, comments, and file attachments |
 | `tools/projects.py` | Projects, sprints, workspaces, lists/boards |
 | `tools/search.py` | Elasticsearch-backed task search (full-text + filters, incl. `--status-type`) |
+| `tools/view.py` | Shared output shaping — lean `summary`/`table`/`json` views for list & read tools |
 | `tools/analytics.py` | Statistics, trends, overdue, finish rates + dashboard summaries / workload / drill-down |
 | `tools/governed_search.py` | Safe DSL query (`governed_search`) — whitelisted entity/field/op, read-only |
 | `tools/auth.py` | PAT management (list/revoke — create requires session JWT) |
@@ -51,6 +52,12 @@ source before first use to understand exact function signatures.
 5. Get subtasks: `python3 tasks.py subtasks <parent_task_id>`
 6. Sprint scope: `python3 tasks.py by-sprint <sprint_id>`
 7. List-scoped: `python3 tasks.py query <list_task_id> [--status STATUS]`
+
+> **Output shaping (list & read tools):** `search.py` (tasks/my-tasks/dashboard/candidates) and
+> `tasks.py` (query/subtasks/by-sprint) default to a lean **`summary`** view (~6KB vs ~1.9MB raw for
+> 30 tasks). Add `--format table [--fields id,name,status,due,priority,project]` for columns, or
+> `--format json` for the full raw record. Status shows `statusType` (Chưa làm/Đang làm/Đã duyệt/
+> Hoàn thành/Đã đóng). `tasks.py get` defaults to `json` (single record = full detail).
 
 ### Workflow 2: Task CRUD _(write — confirm destructive ops)_
 

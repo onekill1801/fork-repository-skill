@@ -24,6 +24,7 @@ import sys
 
 import client
 import config
+import view
 
 
 # ── Search wrappers ────────────────────────────────────────────────────────────
@@ -137,13 +138,14 @@ if __name__ == "__main__":
         parser.add_argument("--size", type=int, default=20)
         parser.add_argument("--sort-by", default="sortOrder")
         parser.add_argument("--sort-order", default="asc", choices=["asc", "desc"])
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(search_tasks(
+        view.emit(search_tasks(
             args.query, args.list_task_id, args.project_id,
             args.status, args.status_type, args.priority, None,
             args.created_by, args.date_start, args.date_end,
             args.page, args.size, args.sort_by, args.sort_order
-        ))
+        ), args.format, view.parse_fields(args.fields))
 
     elif cmd == "my-tasks":
         parser = argparse.ArgumentParser(prog="search.py my-tasks")
@@ -157,12 +159,13 @@ if __name__ == "__main__":
         parser.add_argument("--end", dest="date_end", default=None)
         parser.add_argument("--page", type=int, default=0)
         parser.add_argument("--size", type=int, default=20)
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(search_my_assigned_tasks(
+        view.emit(search_my_assigned_tasks(
             args.query, args.list_task_id, args.project_id,
             args.status, args.status_type, args.date_start, args.date_end,
             args.page, args.size
-        ))
+        ), args.format, view.parse_fields(args.fields))
 
     elif cmd == "dashboard":
         parser = argparse.ArgumentParser(prog="search.py dashboard")
@@ -173,10 +176,11 @@ if __name__ == "__main__":
                             help="Comma-separated status groups: todo,processing,approved,completed,closed,custom")
         parser.add_argument("--page", type=int, default=0)
         parser.add_argument("--size", type=int, default=20)
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(search_dashboard_tasks(
+        view.emit(search_dashboard_tasks(
             args.workspace_id, args.query, args.status, args.status_type, args.page, args.size
-        ))
+        ), args.format, view.parse_fields(args.fields))
 
     elif cmd == "candidates":
         parser = argparse.ArgumentParser(prog="search.py candidates")
@@ -184,10 +188,11 @@ if __name__ == "__main__":
         parser.add_argument("--exclude", dest="exclude_ids", default=None, help="Comma-separated task IDs")
         parser.add_argument("--page", type=int, default=0)
         parser.add_argument("--size", type=int, default=20)
+        view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
-        client.print_json(find_task_candidates(
+        view.emit(find_task_candidates(
             args.query, args.exclude_ids, args.page, args.size
-        ))
+        ), args.format, view.parse_fields(args.fields))
 
     else:
         print(f"Unknown command: {cmd}\n", file=sys.stderr)
