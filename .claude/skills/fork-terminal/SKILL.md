@@ -15,6 +15,7 @@ ENABLE_GEMINI_CLI: true
 ENABLE_CODEX_CLI: true
 ENABLE_CLAUDE_CODE: true
 ENABLE_ANTIGRAVITY_CLI: true
+ENABLE_PARALLEL_ISOLATION: true
 AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli, antigravity-cli
 
 ## Instructions
@@ -42,6 +43,30 @@ AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli, antigravity-cli
 2. READ: `.claude/skills/fork-terminal/tools/fork_terminal.py` to understand our tooling.
 3. Follow the `Cookbook` to determine which tool to use.
 4. Execute the `.claude/skills/fork-terminal/tools/fork_terminal.py: fork_terminal(command: str)` tool.
+
+### Parallel Isolated Agents (worktree)
+
+- IF: The user wants to run MULTIPLE agents in parallel on the same repo without them
+  clobbering each other (shared checkout, same port, same DB) AND `ENABLE_PARALLEL_ISOLATION`
+  is true. Trigger phrases: "chạy nhiều agent song song", "fork agent cách ly", "parallel agents",
+  "isolated workspace", "spawn agent for task <id>".
+- THEN: Read and execute: `.claude/skills/fork-terminal/cookbook/parallel-agents.md`
+- The orchestrator chains three stdlib tools (no `fork_terminal` call by hand needed):
+  1. `tools/worktree_manager.py` — `create_agent_workspace(project_path, task_id, branch_name)`
+     makes a sibling worktree `{project}-agent-{task_id}` on branch `feature/task-{task_id}`
+     (checks out the branch if it already exists). `remove_agent_workspace(...)` cleans it up.
+  2. `tools/runtime_isolator.py` — `isolate_environment(workspace_path, task_id)` rewrites
+     PORT/`server.port` to a per-task port in [8000,9000] and DB name to `{db}_task_{task_id}`
+     across `.env` / `application.properties` / `application.yml`. Idempotent.
+  3. `tools/spawn_isolated_agent.py` — ties them together AND forks the terminal with
+     **CWD set to the isolated worktree** (not the source repo). One command:
+     `python spawn_isolated_agent.py spawn --project <repo> --task <id> --cmd "<cli>" [--branch b] [--dry-run]`
+     Cleanup: `python spawn_isolated_agent.py cleanup --project <repo> --task <id> [--force]`.
+- GUARDRAIL: confirm with the user before spawning (it creates branches + windows) and use
+  `--dry-run` first to preview the worktree + isolation without launching a terminal.
+- EXAMPLES:
+  - "fork 3 claude agents song song cho task 5001/5002/5003 trên repo etask"
+  - "spawn an isolated claude agent for task 777 on the etask repo"
 
 ## Cookbook
 

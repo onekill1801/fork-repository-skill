@@ -24,6 +24,7 @@ import client
 import config
 import listen   # reuse _INBOX, _fetch_history, _looks_encrypted
 import send
+import style_profile   # per-conversation saved messaging style
 
 IDLE_SECONDS = 15 * 60
 POLL = 1
@@ -69,12 +70,20 @@ def _draft_reply(gid, me, evs):
     name = (evs[-1].get("senderName") if evs else None) or "Họ"
     new_msgs = "\n".join(f"- {e.get('content')}" for e in evs)
     plural = "các tin nhắn mới" if len(evs) > 1 else "tin mới"
+    # Saved per-conversation style profile (if any) — takes priority over history.
+    profile = style_profile.get(gid)
+    profile_block = (
+        f"--- PROFILE GIỌNG VỚI NGƯỜI NÀY (ƯU TIÊN TUÂN THEO) ---\n{profile.strip()}\n\n"
+        if profile.strip() else ""
+    )
     prompt = (
         "Bạn đang đóng vai CHỦ TÀI KHOẢN, trả lời tin nhắn riêng trên FPT Chat.\n"
-        "Viết GIỐNG HỆT phong cách của 'Tôi' trong lịch sử bên dưới: xưng hô, độ dài câu, "
-        "giọng điệu (trang trọng/thân mật), dùng emoji/teencode hay không, ngôn ngữ.\n"
+        "Viết GIỐNG HỆT phong cách của 'Tôi': xưng hô, độ dài câu, giọng điệu "
+        "(trang trọng/thân mật), dùng emoji/teencode hay không, ngôn ngữ.\n"
+        "Nếu có PROFILE GIỌNG bên dưới, TUÂN THEO nó trước; lịch sử để lấy ngữ cảnh.\n"
         f"Người kia vừa gửi {len(evs)} tin liên tiếp — hãy trả lời MỘT lần cho TẤT CẢ, "
         "tự nhiên, đúng ngữ cảnh.\n\n"
+        f"{profile_block}"
         f"--- LỊCH SỬ TRÒ CHUYỆN ('Tôi' = chủ tài khoản) ---\n{transcript}\n\n"
         f"--- {plural.upper()} TỪ {name} ---\n{new_msgs}\n\n"
         "Chỉ in ra DUY NHẤT nội dung câu trả lời (không giải thích, không ngoặc kép bao quanh)."

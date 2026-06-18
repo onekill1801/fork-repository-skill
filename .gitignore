@@ -141,5 +141,8 @@ temp/
 # Multi-project registry (machine-specific paths / endpoints — visible in tree, not committed)
 work/
 
+# FPT Chat per-conversation style profiles (personal, derived from chat — never commit)
+.claude/skills/fpt-chat-automation/profiles/
+
 # macOS
 .DS_Store

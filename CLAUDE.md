@@ -57,6 +57,9 @@ python gitlab_api.py mr-discussions <iid>
 python gitlab_api.py create-branch <name> [ref]    # [WRITE]
 python gitlab_api.py create-mr <source> "title" [target]   # [WRITE]
 python gitlab_api.py mr-comment <iid> "body"       # [WRITE]
+python gitlab_api.py whoami                         # user GitLab hiện tại
+python gitlab_api.py my-review-mrs [reviewer|assignee|both]   # MR gắn tên tôi (toàn project)
+python mr_watch.py [--who ...] [--interval 300] [--once] [--no-spawn]   # poll MR gắn tên tôi → tự mở Claude review (hỏi trước khi post)
 python notifier.py started|mr-created|review-done|deploy-done|custom <id> ...   # [WRITE → người thật thấy]
 ```
 
@@ -65,7 +68,7 @@ python notifier.py started|mr-created|review-done|deploy-done|custom <id> ...   
 python tasks.py get|query|subtasks|by-sprint ...   # đọc
 python tasks.py create|update|complete|move|assign-sprint|delete ...   # [WRITE]
 python projects.py my-projects|my-lists|sprints|get-sprint|workspace ...
-python search.py my-tasks|tasks|dashboard|candidates ...   # hỗ trợ --status-type
+python search.py my-tasks|tasks|dashboard|candidates ...   # --status-type · --format summary|table|json · --fields ...
 python analytics.py stats|by-status|by-priority|overdue|trends|finish-rates|unassigned|history ...
 python analytics.py my-dashboard|org-dashboard|user-dashboard|project-dashboard|workload|by-metric|recent ...
 python governed_search.py search --entity task --filter "field:op:value" ...   # DSL an toàn (whitelist)

@@ -87,6 +87,11 @@ python send.py recall --group ID --inc MESSAGE_ID_INC [--yes]                # [
 python listen.py [--reply claude|notify|off]   # long-running: route incoming msgs; DM -> per-conversation worker terminal
 python reply_worker.py <group_id>              # (auto-launched by listen.py) per-conversation auto-reply worker
 python auth.py refresh | token-status                                        # token mgmt (auto-refresh is automatic)
+
+python style_profile.py list | path <gid> | get <gid>                        # kho "giọng nhắn" theo từng hội thoại (gitignored)
+python style_profile.py gather <gid> [--limit N]                             # raw material đọc được để phân tích giọng
+python style_profile.py save <gid> --file F | --stdin [--name "Tên"]         # ghi profile (agent điền sau khi phân tích)
+python style_profile.py template [--gid G] [--name N]                        # khung profile trống
 ```
 
 Realtime send uses `ws_client.py` (a minimal stdlib WebSocket client) against
@@ -127,6 +132,20 @@ Listener modes: `--reply claude` (default), `--reply notify` (print only),
 `--reply off` (log only). Reply model: env `FCHAT_REPLY_MODEL` (default `sonnet`).
 Heartbeat + auto-reconnect + token refresh are built in. Stop with Ctrl+C.
 
+## Style profiles (giọng nhắn theo từng người)
+
+Lưu cách chủ tài khoản nhắn với **từng hội thoại** để bản nháp/auto-reply soạn đúng giọng,
+ổn định. Profile ở `profiles/<gid>.md` (**gitignored** — cá nhân, từ chat). `reply_worker.py`
+tự nạp profile của hội thoại đó vào prompt (ưu tiên hơn lịch sử).
+
+**Học/cập nhật giọng với 1 người (hybrid):**
+1. `python style_profile.py gather <gid>` — lấy phần đọc được (tin '[Tôi]' = bạn gửi, là nguồn
+   chính; tin E2E mã hoá bị bỏ qua).
+2. Agent phân tích → điền template (`style_profile.py template`) → người dùng chỉnh.
+3. `python style_profile.py save <gid> --file <profile.md>` (hoặc `--stdin`).
+> ⚠️ Nội dung chat E2E mã hoá → KHÔNG tự đọc được; auto-learn chỉ từ plaintext + tin bạn gửi,
+> phần còn lại điền tay.
+
 ## Workflows
 
 1. **Browse conversations & history** → `cookbook/read-conversations.md`
@@ -148,6 +167,8 @@ Heartbeat + auto-reconnect + token refresh are built in. Stop with Ctrl+C.
 | "send a message to <group>", "gửi tin nhắn" | `send.py text` (confirm → `--yes`; non-secure only) |
 | "recall / thu hồi tin nhắn" | `send.py recall --group --inc` (confirm → `--yes`) |
 | "read messages in <group>", "đọc tin nhắn" | `messages.py list` |
+| "học/lưu giọng nhắn với <người>", "phong cách nhắn tin" | `style_profile.py gather` → phân tích → `save` |
+| "soạn/trả lời theo giọng của tôi" | `reply_worker` tự nạp `style_profile.py get <gid>` |
 | "files/links/media in <group>" | `messages.py media --type ...` |
 | "find user X", "tìm người dùng" | `users.py search --q X` |
 | "my todos", "việc cần làm", "expired tasks" | `todos.py list` / `count-expired` |

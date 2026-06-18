@@ -27,7 +27,8 @@ The agent MUST read the tool source before first use to understand function sign
 |------|---------|
 | `tools/config.py` | Configuration loader — reads `.env` for API tokens |
 | `tools/azure_devops.py` | Azure DevOps Work Items API — read tasks, update state, add comments |
-| `tools/gitlab_api.py` | GitLab API — branches, merge requests, diffs, comments |
+| `tools/gitlab_api.py` | GitLab API — branches, merge requests, diffs, comments, `whoami`, `my-review-mrs` |
+| `tools/mr_watch.py` | Poll GitLab for MRs assigned to me → auto-launch a Claude review (Workflow 5) |
 | `tools/notifier.py` | Send formatted notifications via Azure DevOps comments |
 
 ## Workflows
@@ -89,6 +90,43 @@ The agent MUST read the tool source before first use to understand function sign
 2. Gather info: MR link, dev environment URL, acceptance criteria from the task
 3. Post notification: `python notifier.py deploy-done <task_id> <env_url>`
 
+### Workflow 5: Auto-watch & review MRs assigned to me
+
+**Triggers:** "auto review MR", "watch my MRs", "review MR gắn tên tôi", "tự động review MR"
+
+`tools/mr_watch.py` is a long-running poller. Every interval it lists OPENED MRs
+where you are the reviewer (or assignee) across all accessible projects
+(`gitlab_api.list_review_merge_requests`). For each MR not yet reviewed at its
+current head SHA it:
+1. maps the MR's project → the registered clone in `work/projects.json`;
+2. **pulls the MR's latest code** into an ISOLATED git worktree at the exact MR
+   SHA (`git fetch origin merge-requests/<iid>/head` + `git worktree add --detach`)
+   — your working branch in the clone is never touched;
+3. **opens one terminal** running headless `claude -p --dangerously-skip-permissions
+   --model <MR_REVIEW_MODEL|sonnet>` IN that worktree — it reviews the MR against the
+   real code (full repo context + canonical diff via `gitlab_api.py mr-changes`),
+   saves the review to `temp/mr_reviews/mr_<pid>_<iid>.md`, **auto-posts** it as an
+   MR comment, prints a summary, and exits;
+4. the terminal **auto-closes** (`cmd /c`) and the worktree is removed.
+
+Fully automatic (no prompts) — `claude -p` runs the whole review and exits, so the
+window closes itself; output is logged to `temp/mr_reviews/mr_<pid>_<iid>.log`.
+If the project has no registered/cloned entry, it falls back to an API-diff-only
+review. Re-reviews when commits change the SHA. State in `temp/mr_reviewed.json`;
+worktrees under `temp/mr_worktrees/` (pruned on start); instructions in `temp/mr_incoming/`.
+
+```
+python gitlab_api.py whoami                         # current GitLab user
+python gitlab_api.py my-review-mrs [reviewer|assignee|both]   # MRs tagged to me
+python mr_watch.py [--who reviewer|assignee|both] [--interval 300] [--max-per-cycle 3] \
+                   [--review-existing] [--once] [--no-spawn] [--include-drafts]
+```
+
+Defaults: `--who reviewer`, poll every 5 min, spawn Claude with confirm-before-post.
+**First run = baseline** (marks current MRs seen, doesn't review the backlog → no
+terminal flood); only NEW/updated MRs are auto-reviewed thereafter. `--review-existing`
+to work through the backlog (throttled by `--max-per-cycle`, default 3 per poll).
+
 ## Routing Rules
 
 When the user makes a request, match it to the correct workflow:
@@ -101,6 +139,7 @@ When the user makes a request, match it to the correct workflow:
 | "notify tester" / "deploy done" | Workflow 4 | `prompts/notify_tester_prompt.md` |
 | "list my tasks" / "show assigned tasks" | Direct call | `python azure_devops.py list` |
 | "list open MRs" | Direct call | `python gitlab_api.py list-mrs` |
+| "auto review MR" / "watch my MRs" / "review MR gắn tên tôi" | Workflow 5 | `python mr_watch.py` |
 
 ## Slash Commands (explicit invocation)
 
@@ -114,6 +153,7 @@ Same workflows as above, via `.claude/commands/`:
 | `/fix-bug <id>` | Workflow 2 |
 | `/implement-feature <id>` | Workflow 3 |
 | `/notify-tester <id> [url]` | Workflow 4 |
+| `/watch-mrs [who] [interval]` | Workflow 5 (start the MR auto-review watcher) |
 
 Run Python tools from `tools/` relative to this skill. Use `python3` on Linux/macOS; `python` on Windows if `python3` is unavailable.
 

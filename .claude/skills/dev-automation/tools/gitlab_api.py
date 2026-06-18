@@ -13,6 +13,8 @@ Usage:
     python gitlab_api.py list-mrs [state]
     python gitlab_api.py mr-discussions <mr_iid>
     python gitlab_api.py mr-detail <mr_iid>
+    python gitlab_api.py whoami
+    python gitlab_api.py my-review-mrs [reviewer|assignee|both]
 """
 
 import json
@@ -188,6 +190,52 @@ def list_open_merge_requests(state: str = "opened") -> list[dict]:
     ]
 
 
+def current_user() -> dict:
+    """Get the authenticated GitLab user (id, username, name)."""
+    return _request(f"{config.gitlab_base_url()}/user")
+
+
+def list_review_merge_requests(username: str, who: str = "reviewer",
+                               state: str = "opened") -> list[dict]:
+    """List opened MRs across ALL accessible projects where the user is tagged.
+
+    who = 'reviewer' | 'assignee' | 'both'. Uses the global /merge_requests
+    endpoint with reviewer_username / assignee_username filters.
+    """
+    base = config.gitlab_base_url()
+    common = f"state={state}&order_by=updated_at&sort=desc&per_page=50&scope=all"
+    queries = []
+    if who in ("reviewer", "both"):
+        queries.append(f"reviewer_username={urllib.parse.quote(username)}")
+    if who in ("assignee", "both"):
+        queries.append(f"assignee_username={urllib.parse.quote(username)}")
+
+    merged, seen = [], set()
+    for q in queries:
+        result = _request(f"{base}/merge_requests?{common}&{q}")
+        if isinstance(result, dict) and result.get("error"):
+            return [result]
+        for mr in (result if isinstance(result, list) else []):
+            key = (mr.get("project_id"), mr.get("iid"))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({
+                "project_id": mr.get("project_id"),
+                "iid": mr.get("iid"),
+                "title": mr.get("title", ""),
+                "sha": mr.get("sha", ""),
+                "state": mr.get("state", ""),
+                "author": mr.get("author", {}).get("name", ""),
+                "source_branch": mr.get("source_branch", ""),
+                "target_branch": mr.get("target_branch", ""),
+                "web_url": mr.get("web_url", ""),
+                "updated_at": mr.get("updated_at", ""),
+                "draft": mr.get("draft", mr.get("work_in_progress", False)),
+            })
+    return merged
+
+
 def get_mr_discussions(mr_iid: int) -> list[dict]:
     """Get all discussion threads on a merge request."""
     url = _api(f"/merge_requests/{mr_iid}/discussions")
@@ -258,6 +306,17 @@ if __name__ == "__main__":
     elif cmd == "list-mrs":
         state = sys.argv[2] if len(sys.argv) >= 3 else "opened"
         _print_json(list_open_merge_requests(state))
+
+    elif cmd == "whoami":
+        _print_json(current_user())
+
+    elif cmd == "my-review-mrs":
+        who = sys.argv[2] if len(sys.argv) >= 3 else "reviewer"
+        u = current_user()
+        if isinstance(u, dict) and u.get("error"):
+            _print_json(u)
+        else:
+            _print_json(list_review_merge_requests(u.get("username", ""), who))
 
     elif cmd == "mr-discussions" and len(sys.argv) >= 3:
         _print_json(get_mr_discussions(int(sys.argv[2])))

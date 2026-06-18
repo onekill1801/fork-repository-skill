@@ -6,10 +6,14 @@ import platform
 import subprocess
 
 
-def fork_terminal(command: str) -> str:
-    """Open a new Terminal window and run the specified command."""
+def fork_terminal(command: str, cwd: str = None) -> str:
+    """Open a new Terminal window and run the specified command.
+
+    cwd: thư mục làm việc cho terminal mới. Mặc định là CWD hiện tại; truyền
+    workspace_path (worktree đã cách ly) để agent phụ chạy trong không gian riêng.
+    """
     system = platform.system()
-    cwd = os.getcwd()
+    cwd = os.path.abspath(cwd) if cwd else os.getcwd()
 
     if system == "Darwin":  # macOS
         # Build shell command - use single quotes for cd to avoid escaping issues
@@ -67,6 +71,12 @@ def fork_terminal(command: str) -> str:
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1:
-        output = fork_terminal(" ".join(sys.argv[1:]))
+    args = sys.argv[1:]
+    cwd = None
+    # Optional leading "--cwd <path>" so the new terminal opens in an isolated worktree.
+    if len(args) >= 2 and args[0] == "--cwd":
+        cwd = args[1]
+        args = args[2:]
+    if args:
+        output = fork_terminal(" ".join(args), cwd=cwd)
         print(output)
