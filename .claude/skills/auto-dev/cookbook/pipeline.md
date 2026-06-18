@@ -31,15 +31,38 @@ Trích: tiêu đề, mô tả, repro/acceptance, severity, work item liên quan.
 python run_log.py stage <RID> plan active
 ```
 - Định vị code liên quan (search class/method trong mô tả), đọc test hiện có, `git log` file ảnh hưởng.
-- Viết plan cụ thể: **file sẽ sửa · hướng tiếp cận · chiến lược test (test nào chứng minh fix)**.
+- Viết plan cụ thể: file sẽ sửa · hướng tiếp cận · chiến lược test (test nào chứng minh fix).
 - Dùng `dev-automation/prompts/task_analysis_prompt.md` để cấu trúc phân tích.
+
+> **Định dạng plan = thẻ HTML/XML (giao tiếp Agent↔Agent).** Plan là dữ liệu trung gian giữa
+> Plan-agent và Implement-agent → BẮT BUỘC bọc trong thẻ, KHÔNG Markdown bên trong (xem
+> `auto-dev/prompts/SYSTEM_PROMPT.md`). Ghi plan ra `temp/runs/<RID>-plan.xml`:
+>
+> ```
+> <plan>
+>   <approach>...</approach>
+>   <target_files><file>path/a.java</file><file>path/b.java</file></target_files>
+>   <test_strategy>...</test_strategy>
+> </plan>
+> ```
+
+Khi bước Implement cần danh sách file cần sửa, **KHÔNG cắt chuỗi Markdown theo dòng** — bóc
+tách cấu trúc bằng parser chuẩn:
+
+```bash
+# Danh sách file cần sửa (list parent/child):
+python ../../fork-terminal/tools/agent_parser.py list target_files file --file ../../../../temp/runs/<RID>-plan.xml
+# Cả khối approach / test_strategy:
+python ../../fork-terminal/tools/agent_parser.py tag approach      --file ../../../../temp/runs/<RID>-plan.xml
+```
 
 ```bash
 python run_log.py stage <RID> plan done
 ```
 
 ### ✋ Checkpoint `after_plan`
-Trình bày plan cho người dùng. Chờ duyệt. Khi được duyệt:
+Trình bày plan cho người dùng **dưới dạng Markdown sạch** (bỏ thẻ — thẻ chỉ dùng cho
+Agent↔Agent). Chờ duyệt. Khi được duyệt:
 ```bash
 python run_log.py checkpoint <RID> after_plan approved
 ```
@@ -74,7 +97,9 @@ python test_runner.py run --project <P> --kind test
 ```
 Đọc JSON trả về:
 - `"passed": true` → `python run_log.py stage <RID> test done` → sang bước 5.
-- `"passed": false` → đọc `log_tail`, sửa nguyên nhân, chạy lại. Lặp tối đa **3 lần**.
+- `"passed": false` → JSON kèm sẵn trường `error_context` (log lỗi đã bọc trong thẻ
+  `<error_context>...</error_context>`). Đưa NGUYÊN thẻ này cho Fix-agent làm ngữ cảnh sửa
+  (giao tiếp Agent↔Tool dùng thẻ, không Markdown), sửa nguyên nhân, chạy lại. Lặp tối đa **3 lần**.
   Hết 3 lần vẫn đỏ:
   ```bash
   python run_log.py stage <RID> test failed

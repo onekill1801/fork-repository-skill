@@ -42,6 +42,7 @@ All tools live in `../dev-automation/tools/` (shared). Read tool source before f
 | `run_log.py` | **State machine** — resume + audit trail in `temp/runs/<run_id>.json` |
 | `gitlab_api.py` | branch + MR |
 | `notifier.py` | progress notifications (checkpoint `before_notify` guards these) |
+| `../fork-terminal/tools/agent_parser.py` | **Parse dữ liệu Agent↔Agent** — bóc `<plan>` / `<target_files>` / `<error_context>` bằng regex (stdlib) |
 
 > New tools added for this pipeline: `test_runner.py`, `run_log.py`, and the
 > stack-verify set (`probe_*.py`, `flow_check.py`, `jenkins.py`). See
@@ -100,6 +101,13 @@ runs. Re-enter at the first stage whose status is not `done`.
 | "show pipeline runs" | `run_log.py list --open` |
 
 Slash command: `/auto-dev <task_id|description>`.
+
+## Giao thức giao tiếp Agent (BẮT BUỘC)
+
+Mọi dữ liệu trung gian Agent↔Agent và Agent↔Tool (Plan, Target Files, Error Log, lời thoại
+tranh luận) dùng **thẻ HTML/XML nghiêm ngặt**, KHÔNG Markdown — chi tiết + bộ thẻ chuẩn ở
+`prompts/SYSTEM_PROMPT.md`. Bóc tách bằng `../fork-terminal/tools/agent_parser.py` (không cắt
+chuỗi theo dòng). **Đầu ra cuối cho người dùng vẫn là Markdown sạch** (bỏ thẻ).
 
 ## Guardrails (inherits CLAUDE.md)
 

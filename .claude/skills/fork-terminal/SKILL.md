@@ -68,6 +68,17 @@ AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli, antigravity-cli
   - "fork 3 claude agents song song cho task 5001/5002/5003 trên repo etask"
   - "spawn an isolated claude agent for task 777 on the etask repo"
 
+### Parsing dữ liệu Agent↔Agent (HTML/XML)
+
+- IF: Cần bóc tách dữ liệu có cấu trúc do một agent sinh ra cho agent/tool khác (Plan,
+  Target Files, Error Log, lời thoại tranh luận) — giao tiếp nội bộ dùng **thẻ HTML/XML
+  nghiêm ngặt**, KHÔNG Markdown (xem `.claude/skills/auto-dev/prompts/SYSTEM_PROMPT.md`).
+- THEN: dùng `tools/agent_parser.py` (regex stdlib, không cần BeautifulSoup):
+  - `extract_tag_content(text, tag)` — nội dung một thẻ.
+  - `extract_list_items(text, parent, child)` — danh sách item trong thẻ cha/con.
+  - CLI: `python tools/agent_parser.py list target_files file --file plan.xml`
+- GUARDRAIL: thẻ chỉ cho giao tiếp ngầm; đầu ra cuối cho người dùng vẫn Markdown sạch.
+
 ## Cookbook
 
 ### Raw CLI Commands

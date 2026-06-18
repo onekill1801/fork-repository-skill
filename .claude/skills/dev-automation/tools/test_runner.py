@@ -25,6 +25,10 @@ Usage:
 Output: a single JSON object on stdout.
     {"passed": true, "exit_code": 0, "kind": "test", "command": "...",
      "cwd": "...", "duration_sec": 12.3, "summary": "...", "log_tail": "..."}
+On a FAIL verdict the result also carries an "error_context" field: the failure log
+wrapped in an <error_context>...</error_context> tag, ready to hand straight to a
+fix-agent (Agent<->Tool comms use strict HTML/XML tags — see
+auto-dev/prompts/SYSTEM_PROMPT.md), instead of loose Markdown.
 On failure to even start: {"error": true, "message": "..."}
 """
 
@@ -171,6 +175,22 @@ def _tail(text: str, lines: int = LOG_TAIL_LINES) -> str:
     return "...(truncated)...\n" + "\n".join(parts[-lines:])
 
 
+def _error_context(command: str, cwd: str, detail: str) -> str:
+    """Bọc log lỗi runtime vào thẻ <error_context> để ném ngược cho Agent phụ sửa code.
+
+    Giao tiếp Agent↔Tool dùng thẻ HTML/XML nghiêm ngặt (xem
+    auto-dev/prompts/SYSTEM_PROMPT.md) thay vì Markdown — Agent phụ đọc thẳng thẻ này
+    làm ngữ cảnh sửa, không phải parse Markdown lỏng lẻo.
+    """
+    return (
+        "<error_context>\n"
+        f"  <command>{command}</command>\n"
+        f"  <cwd>{cwd}</cwd>\n"
+        f"  <log>{detail}</log>\n"
+        "</error_context>"
+    )
+
+
 def cmd_run(args) -> dict:
     command, cwd = _resolve(args)
     start = time.monotonic()
@@ -192,12 +212,17 @@ def cmd_run(args) -> dict:
             "cwd": cwd,
             "timed_out": True,
             "summary": f"command timed out after {args.timeout}s",
+            # Giao tiếp Agent↔Tool: bọc lỗi vào thẻ cho Agent phụ sửa.
+            "error_context": _error_context(
+                command, cwd, f"command timed out after {args.timeout}s"
+            ),
         }
     duration = round(time.monotonic() - start, 1)
     combined = (proc.stdout or "") + (proc.stderr or "")
     passed = proc.returncode == 0
     summary = "PASS" if passed else f"FAIL (exit {proc.returncode})"
-    return {
+    log_tail = _tail(combined)
+    result = {
         "passed": passed,
         "exit_code": proc.returncode,
         "kind": args.kind,
@@ -205,8 +230,12 @@ def cmd_run(args) -> dict:
         "cwd": cwd,
         "duration_sec": duration,
         "summary": summary,
-        "log_tail": _tail(combined),
+        "log_tail": log_tail,
     }
+    # Chỉ FAIL mới kèm <error_context> — PASS không cần ngữ cảnh sửa lỗi.
+    if not passed:
+        result["error_context"] = _error_context(command, cwd, log_tail)
+    return result
 
 
 def cmd_detect(args) -> dict:
