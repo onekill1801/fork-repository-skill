@@ -15,39 +15,61 @@ one pipeline: **Intake → Plan → Implement → Test → Deliver**. It does no
 skills — it sequences them and adds the two missing pieces: a **test gate** and a
 **resumable run-log**.
 
-## Autonomy: checkpoint mode (default)
+## Autonomy: Hybrid by complexity
 
-The agent runs automatically but **STOPS for human approval at three checkpoints**:
+Triage at Intake classifies each run into a **tier** + **mode** (see `triage.py`):
 
-1. `after_plan` — after the plan is written, before any code is changed.
-2. `before_mr` — after tests pass, before creating the merge request.
+| tier | mode | checkpoints | gate behaviour |
+|------|------|-------------|----------------|
+| `trivial` | `auto` | skipped | a failed gate **BLOCKS** the transition (no human in the loop) |
+| `standard` / `complex` | `checkpoint` | the three below | a failed gate **INFORMS** the human approver (does not auto-block) |
+
+The three checkpoints (checkpoint mode):
+1. `after_plan` — after the plan, before any code change.
+2. `before_mr` — after tests pass + review, before the merge request.
 3. `before_notify` — before any `notifier.py` call (a real person will see it).
 
 At each checkpoint: present the artifact, ask for approval, record it with
-`run_log.py checkpoint <run_id> <name> approved`, then continue. Do NOT pass a
-checkpoint without explicit user approval. (This is the mode the user selected; other
-autonomy levels move or remove these stops.)
+`run_log.py checkpoint <run_id> <name> approved`, then continue. Never pass a checkpoint
+without explicit approval.
+
+### Evidence-gated transitions (core principle)
+
+A stage is advanced with `run_log.py advance <run_id> <stage>` — which only marks it `done`
+when the **evidence** it requires has been recorded (`run_log.py record-gate ...`). The gate
+guards the state machine; it is not advisory narration. **Do not use `stage <id> <s> done`** to
+self-declare progress in an automated run (that legacy command trusts the caller and exists only
+for manual unstick / backward compatibility). `advance` reads the run's `mode` to decide
+block-vs-inform — that single fork is the entire difference between the autonomy levels.
+
+Required gates: `implement→grounding`, `test→test+lint` (lint mandatory, waivable), `deliver→
+review+ac`. `build`/`integration` are advisory (reported, never block alone).
 
 ## Tools
 
-All tools live in `../dev-automation/tools/` (shared). Read tool source before first use.
+Pipeline tools live in `tools/` (this skill) and `../dev-automation/tools/` (shared). Read tool
+source before first use.
 
 | Tool | Role in pipeline |
 |------|------------------|
-| `azure_devops.py` / `search.py` (etask) | Intake: read the task |
-| `test_runner.py` | **Test gate (unit/build)** — `run --project <p> --kind test` → JSON `passed` |
-| `probe_api.py` `probe_db.py` `probe_redis.py` `probe_kafka.py` | **Integration probes** — assert real API/DB/Redis/Kafka state |
-| `flow_check.py` | **E2E gate** — run a JSON scenario across components (`cookbook/stack-verify.md`) |
-| `jenkins.py` | **CI gate (optional)** — trigger a Jenkins build and wait for SUCCESS |
-| `run_log.py` | **State machine** — resume + audit trail in `temp/runs/<run_id>.json` |
+| `tools/triage.py` | **Intake: triage** — classify tier (trivial/standard/complex) + mode (auto/checkpoint); heuristic-first, optional `--backend` agent |
+| `tools/debate_engine.py` | **Plan: Agent Debate** — Dev/Architect/Moderator via subscription CLI agent (claude/cursor/agy, headless; no API key) → `temp/runs/<task_id>_plan.xml`. Skipped for `tier=trivial` |
+| `tools/agent_runner.py` | **Shared headless-agent primitive** — `run_turn()`; reused by triage / grounding / review_gate |
+| `tools/grounding.py` | **Implement gate `grounding`** — gather target files + neighbours + stack into an artifact before coding |
+| `tools/review_gate.py` | **Deliver gate `review`** — review the real `git diff` pre-MR, JSON verdict, posts NOTHING |
+| `azure_devops.py` / `search.py` (etask) | Intake: read the task + acceptance criteria |
+| `test_runner.py` | **Test gates** — `run --project <p> --kind test\|lint\|build` → JSON `passed` |
+| `probe_*.py` (`probe_db.py check-db` guards the isolated DB) `flow_check.py` `jenkins.py` | **Integration / e2e / CI** — see `cookbook/stack-verify.md` |
+| `run_log.py` | **Evidence-gated state machine** — `record-gate` / `advance` / AC ledger; resume + audit in `temp/runs/<run_id>.json` |
 | `gitlab_api.py` | branch + MR |
 | `notifier.py` | progress notifications (checkpoint `before_notify` guards these) |
-| `../fork-terminal/tools/agent_parser.py` | **Parse dữ liệu Agent↔Agent** — bóc `<plan>` / `<target_files>` / `<error_context>` bằng regex (stdlib) |
+| `../fork-terminal/tools/agent_parser.py` | **Parse Agent↔Agent data** — `<target_files>` / `<error_context>` / `<review>` via stdlib regex |
 
-> New tools added for this pipeline: `test_runner.py`, `run_log.py`, and the
-> stack-verify set (`probe_*.py`, `flow_check.py`, `jenkins.py`). See
-> `cookbook/pipeline.md` for the command sequence, `cookbook/stack-verify.md` for
-> integration/e2e testing, and `cookbook/intake.md` for Azure DevOps / eTask intake.
+> New for the evidence-gated pipeline: `triage.py`, `agent_runner.py`, `grounding.py`,
+> `review_gate.py`, the `run_log.py` gate/AC commands, and `probe_db.py check-db`. See
+> `cookbook/pipeline.md` for the command sequence, `cookbook/intake.md` for triage + intake,
+> `cookbook/stack-verify.md` for integration/e2e. Unit tests for the framework live in `tests/`
+> (`python -m unittest discover -s tests`).
 
 ## The pipeline
 
@@ -63,29 +85,26 @@ to `failed`, post the failure summary, and hand back to the human — do not del
 
 ### Step sequence (checkpoint mode)
 
-1. **Intake.** Resolve the task. Pick a `run_id` (e.g. `<project>-<task_id>`).
-   `run_log.py init <run_id> --task <id> --project <p> --type <bugfix|feature> --title "..."`.
-   Resolve project from `./work/projects.json`; if absent, ask the user for the working dir.
-2. **Plan.** `stage plan active`. Read the relevant code, write a concrete plan (files to
-   touch, approach, test strategy). `stage plan done`.
-   **✋ Checkpoint `after_plan`** — show the plan, get approval, record it.
-3. **Implement.** `stage implement active`. Create the branch
-   (`gitlab_api.py create-branch`), write code in the project's `clone_dir` following
-   `dev-automation/cookbook/java-standards.md`, add/adjust tests. `stage implement done`.
-4. **Test.** `stage test active`. Run gates in order, stop at first failure:
-   - **Unit/build (required):** `test_runner.py run --project <p> --kind test`.
-   - **Integration/e2e (if the task touches DB/API/Kafka/Redis):** `flow_check.py --file <scenario>`
-     or individual `probe_*.py` for the changed component. See `cookbook/stack-verify.md`.
-   - **CI (optional):** `jenkins.py build --job <job> --wait` to require a green Jenkins run.
-   - All green → `stage test done`, continue. Any `passed: false` → read the failure, fix the
-     cause, re-run. After `MAX_TEST_RETRIES` failures → `stage test failed`, STOP, report.
-     Note: `{"error": true}` from a probe means "could not run" (service down / config missing),
-     not "passed" — treat it as not-yet-verified, never deliver on it.
-5. **✋ Checkpoint `before_mr`** — show the green test result + diff summary, get approval.
-   Then `gitlab_api.py create-mr ...`, store `run_log.py field <run_id> mr_url <url>`.
-   Self-review the MR using `dev-automation` Workflow 1.
-6. **✋ Checkpoint `before_notify`** — confirm, then `notifier.py mr-created <task_id> <url>`
-   and update task state (`azure_devops.py state <id> Resolved`). `stage deliver done`.
+1. **Intake + Triage.** Resolve the task. `triage.py classify ...` → tier/mode. Pick a `run_id`,
+   then `run_log.py init <run_id> ... --tier <t> --mode <m>`. Extract acceptance criteria into the
+   ledger (`run_log.py ac-add ...`). Resolve project from `./work/projects.json`; if absent, ask.
+2. **Plan.** `stage plan active`. For `standard|complex`: run `debate_engine.py run ...` (subscription
+   CLI agent, no API key) → `<final_specification>` at `temp/runs/<task_id>_plan.xml`. For
+   `trivial`: skip the debate, write a lean spec (keep `<target_files>`). `stage plan done`.
+   **✋ Checkpoint `after_plan`** (checkpoint mode) — present the spec as clean Markdown, get approval.
+3. **Implement.** `stage implement active`. Branch off the env's target branch. **Run `grounding.py`
+   and `record-gate <RID> grounding`** before editing. Write code in `clone_dir` (read the grounding
+   artifact, follow `java-standards.md`), add/adjust tests. `advance <RID> implement`.
+4. **Test.** `stage test active`. Run + `record-gate` each: `test` (required), `lint` (required,
+   `--verdict waived` if no linter), `build` (advisory). Integration/e2e if the task touches
+   DB/API/Kafka/Redis (guard the isolated DB with `probe_db.py check-db`). A probe `{"error":true}`
+   = "could not run", never a pass. Fix-and-retry the `test` gate up to `MAX_TEST_RETRIES`; still
+   red → STOP, report, no MR. Then `advance <RID> test`.
+5. **Deliver.** `review_gate.py run ...` on the real diff → `record-gate <RID> review` (no posting;
+   fix blockers before MR). `ac-map` each criterion to evidence. **✋ Checkpoint `before_mr`** —
+   show test+review+AC, get approval, then `gitlab_api.py create-mr ...`, store `mr_url`.
+6. **✋ Checkpoint `before_notify`** — confirm, then `notifier.py mr-created <task_id> <url>`,
+   update task state, and `advance <RID> deliver` (done iff `review`+`ac` gates pass).
 
 ## Resuming a run
 

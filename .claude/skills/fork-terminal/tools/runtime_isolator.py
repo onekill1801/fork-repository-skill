@@ -59,6 +59,17 @@ def _db_suffix(task_id):
     return "_task_{}".format(task_id)
 
 
+def isolated_db_name(base_name, task_id):
+    """Expected isolated DB name for a base DB + task (idempotent).
+
+    NOTE: isolation only RENAMES the DB in config — it does NOT create it. Pass this
+    to `probe_db.py check-db --expect-db <name>` before integration probes so a
+    missing/unprovisioned/wrong DB can never count as a passing probe.
+    """
+    suffix = _db_suffix(task_id)
+    return base_name if base_name.endswith(suffix) else base_name + suffix
+
+
 def _rewrite_jdbc_db(value, task_id):
     """Nối hậu tố vào tên database trong một JDBC URL. Idempotent."""
     suffix = _db_suffix(task_id)

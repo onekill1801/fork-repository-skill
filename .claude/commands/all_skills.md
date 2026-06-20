@@ -4,6 +4,7 @@
 
 | Skill | Trigger / purpose |
 |-------|-------------------|
+| **auto-dev** | "auto dev", "chạy pipeline", "làm task tự động" — end-to-end Intake→Triage→Plan→Implement→Test→Deliver with evidence-gated transitions + Hybrid autonomy |
 | **fork-terminal** | "fork terminal", "new terminal" — spawn parallel agents or CLI in a new window |
 | **dev-automation** | "review MR", "fix bug", "list my tasks", Azure DevOps + GitLab workflows |
 | **skill-scaffold** | "extract tools", "scaffold skill" — import app tools into new skills |
@@ -16,6 +17,7 @@
 |---------|---------|
 | `/prime` | Onboard: read all skills, cookbooks, and tools in this repo |
 | `/all_skills` | This list |
+| `/auto-dev <id\|description>` | Run the full evidence-gated pipeline for a task |
 | `/list-tasks` | List Azure DevOps work items assigned to you |
 | `/read-task <id>` | Show one work item |
 | `/review-mr <iid>` | Code review a GitLab merge request |

@@ -113,16 +113,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Parse HTML/XML-tagged agent output (stdlib regex, no deps)."
     )
-    parser.add_argument("--file", help="Đọc văn bản từ file thay vì stdin")
+    # `--file` áp dụng cho mọi lệnh đọc input. Đặt qua parent parser để nó nhận diện được
+    # CẢ trước lẫn sau tên lệnh con (vd `... list target_files file --file plan.xml`).
+    io_parent = argparse.ArgumentParser(add_help=False)
+    io_parent.add_argument("--file", help="Đọc văn bản từ file thay vì stdin")
     sub = parser.add_subparsers(dest="action", required=True)
 
-    p = sub.add_parser("tag", help="Nội dung thẻ đầu tiên")
+    p = sub.add_parser("tag", parents=[io_parent], help="Nội dung thẻ đầu tiên")
     p.add_argument("tag_name")
 
-    p = sub.add_parser("all", help="Nội dung mọi thẻ cùng tên")
+    p = sub.add_parser("all", parents=[io_parent], help="Nội dung mọi thẻ cùng tên")
     p.add_argument("tag_name")
 
-    p = sub.add_parser("list", help="Danh sách item trong thẻ cha/con")
+    p = sub.add_parser("list", parents=[io_parent], help="Danh sách item trong thẻ cha/con")
     p.add_argument("parent_tag")
     p.add_argument("child_tag")
 

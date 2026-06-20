@@ -145,6 +145,55 @@ def cmd_query(args) -> dict:
     }
 
 
+def _check_db_verdict(current, expect_db, engine, masked) -> dict:
+    """Pure verdict for check-db: connected, but is it the EXPECTED (isolated) DB?"""
+    result = {"passed": True, "engine": engine, "current_database": current,
+              "expected_database": expect_db, "command": masked}
+    if expect_db is not None and current != expect_db:
+        # We connected, but NOT to the isolated DB — an integration probe here would
+        # falsely test the wrong (likely shared) database. Treat as error, not pass.
+        result["passed"] = False
+        result["error"] = True
+        result["message"] = (f"connected to '{current}', expected isolated DB "
+                             f"'{expect_db}' — isolation not applied to the probe's config")
+    return result
+
+
+def cmd_check_db(args) -> dict:
+    """Pre-flight for integration probes on an isolated env.
+
+    Guards the runtime_isolator false-pass: isolation only RENAMES the DB in config,
+    it never creates it. This asserts the DB is reachable AND (with --expect-db) that
+    we are actually on the isolated database, returning {error:true} otherwise so a
+    missing/unprovisioned/wrong DB never counts as a passing probe.
+    """
+    c = _conn(args)
+    ident_sql = "select current_database()" if args.engine == "postgres" else "select database()"
+    probe_args = argparse.Namespace(
+        engine=args.engine, sql=ident_sql, host=args.host, port=args.port,
+        user=args.user, password=args.password, name=args.name,
+        dry_run=args.dry_run, timeout=args.timeout)
+    argv, env, masked = _build(probe_args, c)
+    if args.dry_run:
+        return {"dry_run": True, "engine": args.engine, "command": masked,
+                "expected_database": args.expect_db}
+    try:
+        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=args.timeout)
+    except FileNotFoundError:
+        cli = "psql" if args.engine == "postgres" else "mysql"
+        return {"error": True, "passed": False, "message": f"'{cli}' not found on PATH"}
+    except subprocess.TimeoutExpired:
+        return {"error": True, "passed": False,
+                "message": f"connectivity check timed out after {args.timeout}s"}
+    if proc.returncode != 0:
+        return {"error": True, "passed": False, "engine": args.engine, "command": masked,
+                "message": ("cannot connect to database (does it exist / is the isolated DB "
+                            "provisioned?): " + (proc.stderr or proc.stdout)[-500:])}
+    rows = _parse_rows(proc.stdout, args.engine)
+    current = rows[0][0] if rows and rows[0] else None
+    return _check_db_verdict(current, args.expect_db, args.engine, masked)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="DB probe (psql/mysql CLI wrapper)")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -166,7 +215,26 @@ def main() -> int:
     p.add_argument("--allow-prod", action="store_true", help="permit a write query against a protected env")
     p.add_argument("--timeout", type=int, default=60)
 
+    c = sub.add_parser("check-db", help="assert the (isolated) DB is reachable and is the expected one")
+    c.add_argument("--engine", required=True, choices=["postgres", "mysql"])
+    c.add_argument("--expect-db", help="isolated DB name that MUST be the connected one "
+                                       "(e.g. etask_task_123); mismatch -> error, not pass")
+    c.add_argument("--host")
+    c.add_argument("--port")
+    c.add_argument("--user")
+    c.add_argument("--password")
+    c.add_argument("--name", help="database name to connect to")
+    c.add_argument("--dry-run", action="store_true")
+    c.add_argument("--project", help="load this project's stack config from ./work/projects.json")
+    c.add_argument("--env", help="environment (local|dev|uat|sandbox|prod); default from project")
+    c.add_argument("--timeout", type=int, default=60)
+
     args = parser.parse_args()
+    if args.action == "check-db":
+        err = project_config.apply_args(args, mutating=False)
+        if err:
+            return pc.emit(err)
+        return pc.emit(cmd_check_db(args))
     err = project_config.apply_args(args, mutating=_is_write_sql(args.sql))
     if err:
         return pc.emit(err)

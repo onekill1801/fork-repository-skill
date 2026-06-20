@@ -34,6 +34,32 @@ Map: `--task` = eTask task id, `--type` suy từ nhãn/loại task, `--project` 
 > eTask không gắn trực tiếp với GitLab repo → khi tạo branch/MR vẫn dùng `gitlab_api.py`
 > với `GITLAB_PROJECT_ID` của project tương ứng trong `./work/projects.json`.
 
+## Triage — phân tier/mode (Hybrid autonomy)
+
+Sau khi đọc task, phân loại để chọn mức tự động:
+
+```bash
+cd .claude/skills/auto-dev/tools
+python triage.py classify --type <bugfix|feature> --title "<tiêu đề>" --desc "<mô tả>"
+#   [--plan <path>]  đếm <target_files> nếu đã có spec
+#   [--backend claude]  escalate cho agent khi mơ hồ (mặc định heuristic, không tốn token)
+```
+Trả `{tier, mode, reason, skip_debate}`:
+- `trivial` → `mode=auto`, skip debate, gate tự chặn nếu đỏ.
+- `standard|complex` → `mode=checkpoint`, giữ 3 mốc duyệt.
+- Tín hiệu rủi ro (schema/migration/bảo mật/thanh toán/đồng thời...) → ép `complex`.
+
+Override tay khi cần: `--force-tier` / `--force-mode`.
+
+## Trích acceptance criteria
+
+Bóc tiêu chí nghiệm thu từ mô tả/repro/AC của task vào sổ AC (đối chiếu ở Deliver):
+```bash
+python run_log.py ac-add <RID> --text "GET /api/report/export trả 200 + CSV đúng cột"
+python run_log.py ac-add <RID> --text "input độc hại không gây SQLi"
+# ... mỗi tiêu chí một dòng. Sổ trống = không ép (task adhoc/trivial).
+```
+
 ## Chuẩn hoá sau intake
 
 Bất kể nguồn nào, sau intake phải có đủ:
@@ -42,9 +68,11 @@ Bất kể nguồn nào, sau intake phải có đủ:
 |---|---|
 | `run_id` | `<project>-<task_id>` hoặc `adhoc-<slug>` |
 | `task_id` | id nguồn (rỗng nếu adhoc) |
+| `tier` / `mode` | `triage.py` (hoặc override tay) |
 | `project` | khớp `./work/projects.json` (hỏi nếu chưa có registry) |
 | `type` | bugfix \| feature |
 | `title` | tiêu đề task |
+| `acceptance_criteria` | `ac-add` từ mô tả/AC của task |
 | `clone_dir` + `test_cmd` | registry, hoặc hỏi người dùng |
 
 Thiếu `project`/`clone_dir` mà registry chưa tồn tại → **hỏi người dùng** đường dẫn code và

@@ -13,7 +13,13 @@ Follow @.claude/skills/auto-dev/cookbook/pipeline.md exactly. Use @.claude/skill
 
 1. **Intake** — read the task (`azure_devops.py get <id>` or eTask `search.py`/`tasks.py`), pick a `run_id`.
 2. `run_log.py init <run_id> --task <id> --project <p> --type <bugfix|feature> --title "..."`
-3. **Plan** (`stage plan active/done`) → **✋ checkpoint `after_plan`**, get approval.
+3. **Plan via Agent Debate** (`stage plan active`) — chạy `auto-dev/tools/debate_engine.py run
+   --task <id> --desc "..."`: Dev/Architect/Moderator tranh biện → `temp/runs/<id>_plan.xml`
+   (`<final_specification>`). Mặc định dùng **CLI bản subscription** (`--backend claude|cursor|agy`;
+   cursor = binary `agent`; KHÔNG cần API key; `--dry-run` để thử). Bóc
+   `<target_files>` cho bước Implement bằng
+   `fork-terminal/tools/agent_parser.py`. `stage plan done` → **✋ checkpoint `after_plan`**
+   (trình bày spec dạng Markdown sạch), get approval.
 4. **Implement** — create branch, write code + tests in the project's `clone_dir`.
 5. **Test gate** — `test_runner.py run --project <p> --kind test`. Retry-fix up to 3×.
    If still red → `stage test failed`, STOP, report. **Never deliver on red tests.**
