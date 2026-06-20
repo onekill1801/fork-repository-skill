@@ -25,7 +25,7 @@ Mọi agent trong pipeline PHẢI dùng đúng tên thẻ dưới đây để to
 | Danh sách file cần sửa | `<target_files><file>path/đến/file</file>...</target_files>` |
 | Nhật ký / ngữ cảnh lỗi | `<error_context>...log thô...</error_context>` |
 | Lời thoại tranh luận | `<debate><turn agent="...">...</turn>...</debate>` |
-| Agent Debate (xem `tools/debate_engine.py`) | `<dev_proposal>` · `<architect_critique>` · `<dev_rebuttal>` · `<final_specification>` |
+| Agent Debate (xem `tools/debate_engine.py`) | `<dev_proposal>` · `<architect_critique>` (kết bằng `<verdict>APPROVE\|REVISE</verdict>`) · `<dev_rebuttal>` · `<final_specification>` — lặp critique↔rebuttal đến khi APPROVE hoặc hết `--rounds` |
 | Quyết định cuối của một vòng | `<decision>...</decision>` |
 
 Ví dụ một plan hợp lệ (KHÔNG Markdown bên trong):

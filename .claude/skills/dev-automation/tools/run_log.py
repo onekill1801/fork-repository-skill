@@ -68,7 +68,7 @@ MODES = ["auto", "checkpoint"]
 # Gates that MUST be pass|waived before a stage can advance to done.
 # Everything else is advisory: it is reported but never blocks on its own.
 REQUIRED_GATES = {
-    "plan": [],                      # the debate itself is the plan's evidence
+    "plan": ["clarity"],             # requirement must be unambiguous before debate (see clarify.py)
     "implement": ["grounding"],
     "test": ["test", "lint"],        # lint mandatory but waivable (no linter -> waive)
     "deliver": ["review", "ac"],     # 'ac' is derived from the AC ledger (see _gate_verdict)

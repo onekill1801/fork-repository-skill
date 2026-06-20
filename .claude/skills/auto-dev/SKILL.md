@@ -42,8 +42,8 @@ self-declare progress in an automated run (that legacy command trusts the caller
 for manual unstick / backward compatibility). `advance` reads the run's `mode` to decide
 block-vs-inform — that single fork is the entire difference between the autonomy levels.
 
-Required gates: `implement→grounding`, `test→test+lint` (lint mandatory, waivable), `deliver→
-review+ac`. `build`/`integration` are advisory (reported, never block alone).
+Required gates: `plan→clarity`, `implement→grounding`, `test→test+lint` (lint mandatory, waivable),
+`deliver→review+ac`. `build`/`integration` are advisory (reported, never block alone).
 
 ## Tools
 
@@ -52,8 +52,9 @@ source before first use.
 
 | Tool | Role in pipeline |
 |------|------------------|
+| `tools/clarify.py` | **Intake gate `clarity`** — surface ambiguities (scope/io/acceptance/edge/non-functional) as blocking-vs-assumed questions; `brief` folds answers into `temp/runs/<id>_brief.md`. Heuristic-first, optional `--backend`. Required gate on stage `plan` |
 | `tools/triage.py` | **Intake: triage** — classify tier (trivial/standard/complex) + mode (auto/checkpoint); heuristic-first, optional `--backend` agent |
-| `tools/debate_engine.py` | **Plan: Agent Debate** — Dev/Architect/Moderator via subscription CLI agent (claude/cursor/agy, headless; no API key) → `temp/runs/<task_id>_plan.xml`. Skipped for `tier=trivial` |
+| `tools/debate_engine.py` | **Plan: Agent Debate** — Dev/Architect/Moderator via subscription CLI agent (claude/cursor/agy, headless; no API key) → `temp/runs/<task_id>_plan.xml`. Loops critique↔rebuttal up to `--rounds` (default 2; Architect `<verdict>APPROVE</verdict>` converges early). Skipped for `tier=trivial` |
 | `tools/agent_runner.py` | **Shared headless-agent primitive** — `run_turn()`; reused by triage / grounding / review_gate |
 | `tools/grounding.py` | **Implement gate `grounding`** — gather target files + neighbours + stack into an artifact before coding |
 | `tools/review_gate.py` | **Deliver gate `review`** — review the real `git diff` pre-MR, JSON verdict, posts NOTHING |
@@ -86,10 +87,16 @@ to `failed`, post the failure summary, and hand back to the human — do not del
 ### Step sequence (checkpoint mode)
 
 1. **Intake + Triage.** Resolve the task. `triage.py classify ...` → tier/mode. Pick a `run_id`,
-   then `run_log.py init <run_id> ... --tier <t> --mode <m>`. Extract acceptance criteria into the
-   ledger (`run_log.py ac-add ...`). Resolve project from `./work/projects.json`; if absent, ask.
+   then `run_log.py init <run_id> ... --tier <t> --mode <m>`. Resolve project from
+   `./work/projects.json`; if absent, ask.
+1b. **Clarify (gate `clarity`).** `clarify.py analyze ...` → questions. Ask the **blocking** ones
+   (checkpoint mode); auto mode does NOT ask — `needs_clarification` fails the gate and blocks the
+   debate. `clarify.py brief --answers-file ... --out temp/runs/<id>_brief.md` folds answers; use
+   the brief as the debate `--desc` and `ac-add` the `acceptance_seeds`. `record-gate <RID> clarity
+   --verdict pass|fail`.
 2. **Plan.** `stage plan active`. For `standard|complex`: run `debate_engine.py run ...` (subscription
-   CLI agent, no API key) → `<final_specification>` at `temp/runs/<task_id>_plan.xml`. For
+   CLI agent, no API key; loops critique↔rebuttal up to `--rounds`, default 2 — bump to `--rounds 3`
+   for `complex`) → `<final_specification>` at `temp/runs/<task_id>_plan.xml`. For
    `trivial`: skip the debate, write a lean spec (keep `<target_files>`). `stage plan done`.
    **✋ Checkpoint `after_plan`** (checkpoint mode) — present the spec as clean Markdown, get approval.
 3. **Implement.** `stage implement active`. Branch off the env's target branch. **Run `grounding.py`

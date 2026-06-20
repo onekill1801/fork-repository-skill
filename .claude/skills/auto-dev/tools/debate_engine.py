@@ -8,12 +8,15 @@ và tối ưu hiệu năng. Kết quả là một bản đặc tả (spec) đã 
 Giao tiếp Agent↔Agent dùng **thẻ HTML/XML nghiêm ngặt** (xem
 `auto-dev/prompts/SYSTEM_PROMPT.md`); bóc tách bằng `fork-terminal/tools/agent_parser.py`.
 
-Luồng (state machine 4 bước):
-    1. Đề xuất:      Dev        -> <dev_proposal>
-    2. Phản biện:    Architect  -> <architect_critique>   (soi SQLi / rate-limit / connection
-                                                            pool / memory leak / thiếu cache)
-    3. Bảo vệ/sửa:   Dev        -> <dev_rebuttal>
-    4. Phán quyết:   Moderator  -> <final_specification>  (chốt, chứa <target_files> ...)
+Luồng (state machine có VÒNG LẶP lên plan):
+    1. Đề xuất:      Dev        -> <dev_proposal>                (một lần)
+    2. Vòng lặp (tối đa --rounds vòng, mặc định 2):
+         a. Phản biện:  Architect -> <architect_critique>        (soi SQLi / rate-limit / connection
+                                                                  pool / memory leak / thiếu cache),
+                        kết bằng <verdict>APPROVE|REVISE</verdict>
+         b. Nếu APPROVE -> hội tụ sớm, thoát vòng.
+         c. Nếu REVISE  -> Dev sửa -> <dev_rebuttal>; vòng sau Architect soi CHÍNH bản sửa đó.
+    3. Phán quyết:   Moderator  -> <final_specification>  (chốt, chứa <target_files> ...)
 
 BACKEND — KHÔNG cần ANTHROPIC_API_KEY. Mặc định gọi CLI agent bản subscription đã cài trên máy
 (đồng bộ với skill `fork-terminal`), chạy ở chế độ headless/print và bắt stdout. Cờ dưới đây đã
@@ -93,10 +96,14 @@ Bạn là một kiến trúc sư giải pháp KHÓ TÍNH, chuyên bắt lỗi h�
 của Dev để tìm rủi ro, đặc biệt: SQL Injection, thiếu Rate Limit, nghẽn Database (Connection
 Pool), Memory Leak, và thiếu tầng Cache (Redis/Kafka). Với mỗi rủi ro tìm thấy, nêu rõ vị trí và
 đề xuất biện pháp khắc phục. Nếu một hạng mục không có rủi ro, nói rõ "không phát hiện".
+Đây là tranh biện NHIỀU VÒNG: nếu đây không phải vòng đầu, bạn đang soi bản đã được Dev sửa —
+chỉ nêu rủi ro CÒN LẠI, đừng lặp lại thứ Dev đã xử lý.
 ĐỊNH DẠNG BẮT BUỘC: trả lời CHỈ trong một khối thẻ <architect_critique>...</architect_critique>,
 bên trong dùng các thẻ con <risk category="sql_injection|rate_limit|connection_pool|memory_leak|
-cache"> ... mô tả + khắc phục ... </risk>. TUYỆT ĐỐI KHÔNG dùng Markdown. Không viết gì ngoài
-khối thẻ.
+cache"> ... mô tả + khắc phục ... </risk>, và KẾT THÚC bằng đúng một thẻ
+<verdict>APPROVE</verdict> (khi mọi rủi ro chặn đã được xử lý — không cần sửa thêm) HOẶC
+<verdict>REVISE</verdict> (khi vẫn còn rủi ro Dev phải sửa). TUYỆT ĐỐI KHÔNG dùng Markdown.
+Không viết gì ngoài khối thẻ.
 </agent_architect>""",
 
     "agent_moderator": """<agent_moderator>
@@ -359,6 +366,7 @@ _MOCK_RESPONSES = {
         "<risk category=\"rate_limit\">Endpoint export nặng, chưa có rate limit -> thêm bucket 5 req/phút."
         "</risk>"
         "<risk category=\"cache\">Báo cáo lặp lại -> cache kết quả 5 phút ở Redis.</risk>"
+        "<verdict>REVISE</verdict>"
         "</architect_critique>"
     ),
     "dev_rebuttal": (
@@ -409,10 +417,14 @@ def _spec_path(task_id: str) -> str:
 
 # --- 2. STATE MACHINE ------------------------------------------------------------------------
 
+DEFAULT_ROUNDS = 2  # số vòng critique↔rebuttal tối đa trước khi Moderator chốt
+
+
 class DebateEngine:
-    def __init__(self, backend, narrator: Narrator):
+    def __init__(self, backend, narrator: Narrator, max_rounds: int = DEFAULT_ROUNDS):
         self.backend = backend
         self.narrator = narrator
+        self.max_rounds = max(1, max_rounds)
         self.transcript = {}
 
     def _round(self, system_prompt_key: str, output_tag: str, who: str, title: str,
@@ -434,43 +446,83 @@ class DebateEngine:
         self.narrator.speech(who, content)
         return content
 
+    @staticmethod
+    def _is_approve(critique: str) -> bool:
+        """Architect đồng ý chốt khi thẻ <verdict> trong critique = APPROVE."""
+        verdict = agent_parser.extract_tag_content(critique, "verdict")
+        return verdict is not None and verdict.strip().upper().startswith("APPROVE")
+
     def run(self, task_id: str, task_description: str) -> dict:
-        self.narrator.system(f"Bắt đầu Agent Debate cho task '{task_id}' (backend={self.backend.label}).")
+        self.narrator.system(
+            f"Bắt đầu Agent Debate cho task '{task_id}' "
+            f"(backend={self.backend.label}, tối đa {self.max_rounds} vòng).")
+
+        task_xml = f"<task><description>{task_description}</description></task>\n"
 
         dev_proposal = self._round(
-            "agent_dev", "dev_proposal", "dev", "Bước 1/4 · ĐỀ XUẤT",
-            f"<task><description>{task_description}</description></task>\n"
-            f"Hãy đề xuất giải pháp trong thẻ <dev_proposal>.")
+            "agent_dev", "dev_proposal", "dev", "ĐỀ XUẤT BAN ĐẦU",
+            task_xml + "Hãy đề xuất giải pháp trong thẻ <dev_proposal>.")
 
-        critique = self._round(
-            "agent_architect", "architect_critique", "architect", "Bước 2/4 · PHẢN BIỆN",
-            f"<task><description>{task_description}</description></task>\n"
-            f"<dev_proposal>{dev_proposal}</dev_proposal>\n"
-            f"Hãy săm soi và trả về <architect_critique>.")
+        # Vòng lặp critique↔rebuttal: Architect soi bản hiện tại; nếu APPROVE thì hội tụ sớm,
+        # nếu không thì Dev sửa và vòng sau Architect soi chính bản sửa đó (đóng lỗ "rebuttal
+        # không ai review"). `current` luôn là phương án mới nhất Dev đưa ra.
+        current = dev_proposal
+        rounds = []
+        converged = False
+        for r in range(1, self.max_rounds + 1):
+            critique = self._round(
+                "agent_architect", "architect_critique", "architect",
+                f"PHẢN BIỆN · vòng {r}/{self.max_rounds}",
+                task_xml +
+                f"<current_solution>{current}</current_solution>\n"
+                f"Hãy săm soi và trả về <architect_critique> (kết thúc bằng <verdict>).")
+            rounds.append({"round": r, "critique": critique, "rebuttal": None})
 
-        rebuttal = self._round(
-            "agent_dev", "dev_rebuttal", "dev", "Bước 3/4 · BẢO VỆ / SỬA ĐỔI",
-            f"<task><description>{task_description}</description></task>\n"
-            f"<your_proposal>{dev_proposal}</your_proposal>\n"
-            f"<architect_critique>{critique}</architect_critique>\n"
-            f"Bào chữa hoặc cập nhật giải pháp, trả về <dev_rebuttal>.")
+            if self._is_approve(critique):
+                converged = True
+                self.narrator.system(
+                    f"Architect APPROVE ở vòng {r} → hội tụ sớm, chuyển sang phán quyết.")
+                break
 
+            if r == self.max_rounds:
+                self.narrator.system(
+                    f"Hết {self.max_rounds} vòng mà chưa APPROVE → Moderator chốt với bất đồng còn lại.")
+                break
+
+            rebuttal = self._round(
+                "agent_dev", "dev_rebuttal", "dev", f"BẢO VỆ / SỬA ĐỔI · vòng {r}/{self.max_rounds}",
+                task_xml +
+                f"<your_solution>{current}</your_solution>\n"
+                f"<architect_critique>{critique}</architect_critique>\n"
+                f"Bào chữa hoặc cập nhật giải pháp, trả về <dev_rebuttal>.")
+            rounds[-1]["rebuttal"] = rebuttal
+            current = rebuttal
+
+        # Dựng lại toàn bộ transcript nhiều vòng cho Moderator phán quyết.
+        debate_parts = [f"<dev_proposal>{dev_proposal}</dev_proposal>"]
+        for rd in rounds:
+            debate_parts.append(
+                f"<round n=\"{rd['round']}\">"
+                f"<architect_critique>{rd['critique']}</architect_critique>"
+                + (f"<dev_rebuttal>{rd['rebuttal']}</dev_rebuttal>" if rd["rebuttal"] else "")
+                + "</round>")
         history = (
-            f"<task><description>{task_description}</description></task>\n"
-            f"<debate>"
-            f"<dev_proposal>{dev_proposal}</dev_proposal>"
-            f"<architect_critique>{critique}</architect_critique>"
-            f"<dev_rebuttal>{rebuttal}</dev_rebuttal>"
-            f"</debate>\n"
-            f"Chốt phương án cuối cùng trong thẻ <final_specification>.")
+            task_xml +
+            "<debate>" + "".join(debate_parts) + "</debate>\n"
+            "Chốt phương án cuối cùng trong thẻ <final_specification> "
+            "(hợp nhất mọi rủi ro hợp lệ Architect đã nêu qua các vòng).")
         final_spec = self._round(
-            "agent_moderator", "final_specification", "moderator", "Bước 4/4 · PHÁN QUYẾT", history)
+            "agent_moderator", "final_specification", "moderator", "PHÁN QUYẾT", history)
 
+        last = rounds[-1] if rounds else {}
         return {
             "dev_proposal": dev_proposal,
-            "architect_critique": critique,
-            "dev_rebuttal": rebuttal,
+            "architect_critique": last.get("critique"),
+            "dev_rebuttal": last.get("rebuttal"),
             "final_specification": final_spec,
+            "rounds": rounds,
+            "rounds_used": len(rounds),
+            "converged": converged,
         }
 
 
@@ -506,7 +558,7 @@ def cmd_run(args) -> int:
 
     narrator = Narrator(use_color=not args.no_color)
     backend = _make_backend(args)
-    engine = DebateEngine(backend, narrator)
+    engine = DebateEngine(backend, narrator, max_rounds=args.rounds)
 
     result = engine.run(args.task, desc)
     spec_path = None
@@ -519,7 +571,9 @@ def cmd_run(args) -> int:
         "task_id": args.task,
         "backend": backend.label,
         "spec_path": spec_path,
-        "steps": ["dev_proposal", "architect_critique", "dev_rebuttal", "final_specification"],
+        "max_rounds": engine.max_rounds,
+        "rounds_used": result["rounds_used"],
+        "converged": result["converged"],
     }, ensure_ascii=False))
     return 0
 
@@ -528,7 +582,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Agent Debate Engine cho tầng Plan của /auto-dev.")
     sub = parser.add_subparsers(dest="action", required=True)
 
-    p = sub.add_parser("run", help="Chạy 4 bước tranh biện và xuất final_specification")
+    p = sub.add_parser("run", help="Chạy tranh biện nhiều vòng và xuất final_specification")
     p.add_argument("--task", required=True, help="task_id (dùng cho tên file spec)")
     p.add_argument("--desc", help="Mô tả task")
     p.add_argument("--desc-file", help="Đọc mô tả task từ file")
@@ -539,6 +593,9 @@ def main() -> int:
                                           "có thể chứa {model}")
     p.add_argument("--prompt-via", default="", choices=["", "stdin", "arg"],
                    help="Đẩy prompt vào CLI qua stdin (mặc định) hay tham số cuối")
+    p.add_argument("--rounds", type=int, default=DEFAULT_ROUNDS,
+                   help=f"Số vòng critique↔rebuttal tối đa (mặc định {DEFAULT_ROUNDS}; "
+                        f"Architect APPROVE sẽ hội tụ sớm). --rounds 1 = hành vi 1 lượt cũ.")
     p.add_argument("--model", default=config.get("ANTHROPIC_MODEL") or "",
                    help="Model truyền cho CLI/api (rỗng = mặc định của backend)")
     p.add_argument("--cli-timeout", type=int, default=CLI_TIMEOUT)

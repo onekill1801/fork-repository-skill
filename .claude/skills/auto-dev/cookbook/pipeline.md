@@ -57,24 +57,33 @@ python run_log.py stage <RID> plan active
 > **Skip debate cho `tier=trivial`:** task tầm thường (1 file, rủi ro thấp) thì debate là overkill.
 > Khi `skip_debate=true` từ triage: bỏ qua debate, viết spec gọn thẳng vào
 > `temp/runs/<task_id>_plan.xml` (vẫn cần `<target_files>` để bước grounding bóc tách), rồi
-> `run_log.py stage <RID> plan done`. `plan` không có required-gate nên `advance <RID> plan` đi
-> thẳng. Với `standard|complex` → chạy đủ debate dưới đây.
+> `run_log.py stage <RID> plan done`. Stage `plan` có required-gate `clarity` (xem Intake →
+> Clarify): phải `record-gate <RID> clarity --verdict pass` trước thì `advance <RID> plan` mới qua
+> ở auto mode. Với `standard|complex` → chạy đủ debate dưới đây.
 
 Thay vì để 1 agent viết thẳng plan, chạy **Agent Debate Engine** ở đầu tầng Plan: ba vai (Dev /
 Architect / Moderator) tranh biện để thẩm định kiến trúc, soi lỗ hổng bảo mật (SQLi, rate-limit,
 connection pool, memory leak, thiếu cache) và tối ưu hiệu năng trước khi đụng code thật.
 
+**Tranh biện theo VÒNG (không phải 1 lượt).** Dev đề xuất một lần, rồi lặp critique↔rebuttal tối đa
+`--rounds` vòng (mặc định 2): mỗi vòng Architect soi *bản mới nhất* và kết bằng
+`<verdict>APPROVE|REVISE</verdict>`. `APPROVE` → hội tụ sớm, sang phán quyết luôn (tiết kiệm token);
+`REVISE` → Dev sửa, vòng sau Architect soi chính bản sửa đó (đóng lỗ "rebuttal không ai review").
+Hết vòng mà chưa APPROVE → Moderator chốt với phần bất đồng còn lại. `--rounds 1` = hành vi 1-lượt cũ.
+JSON kết quả có `rounds_used` + `converged` để orchestrator biết debate đã hội tụ hay chạm trần vòng.
+
 ```bash
 cd ../../auto-dev/tools
 # Mặc định gọi CLI agent bản subscription → KHÔNG cần ANTHROPIC_API_KEY:
-python debate_engine.py run --task <task_id> --desc "<mô tả task>"            # backend=claude (đã chạy thật OK)
+python debate_engine.py run --task <task_id> --desc "<mô tả task>"            # backend=claude, 2 vòng (mặc định)
+python debate_engine.py run --task <task_id> --desc "..." --rounds 3          # tranh biện sâu hơn cho task phức tạp
 python debate_engine.py run --task <task_id> --desc "..." --backend cursor     # Cursor CLI (binary `agent`)
 python debate_engine.py run --task <task_id> --desc "..." --backend agy         # Antigravity
-# Người dùng xem cuộc tranh biện (có màu) trên STDERR; STDOUT là JSON {spec_path, ...}.
+# Người dùng xem cuộc tranh biện (có màu) trên STDERR; STDOUT là JSON {spec_path, rounds_used, converged}.
 # Kết quả: temp/runs/<task_id>_plan.xml chứa <final_specification> đã được phản biện.
 ```
 Backend (cờ đã đối chiếu `--help` thực tế; tất cả qua subscription, KHÔNG cần API key):
-- `claude` (mặc định) — `claude -p --model <m> --dangerously-skip-permissions`. **✅ Đã chạy thật, 4 vòng OK.**
+- `claude` (mặc định) — `claude -p --model <m> --dangerously-skip-permissions`. **✅ Đã chạy thật, nhiều vòng OK.**
 - `cursor` — Cursor CLI, binary tên **`agent`**: `agent -p --output-format text --model <m> --force --trust`.
   Cờ khớp `agent --help` (print mode thiết kế cho script/non-interactive). Nên chạy được headless;
   xác nhận trên máy bạn (binary `agent` ở PATH cmd của bạn).

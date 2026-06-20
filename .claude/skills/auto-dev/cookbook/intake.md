@@ -34,6 +34,40 @@ Map: `--task` = eTask task id, `--type` suy từ nhãn/loại task, `--project` 
 > eTask không gắn trực tiếp với GitLab repo → khi tạo branch/MR vẫn dùng `gitlab_api.py`
 > với `GITLAB_PROJECT_ID` của project tương ứng trong `./work/projects.json`.
 
+## Clarify — làm rõ yêu cầu mơ hồ (TRƯỚC triage/debate)
+
+Hầu hết yêu cầu vào đều mơ hồ; debate giỏi mấy mà input mơ hồ vẫn lên plan sai. Chạy `clarify.py`
+ngay sau khi đọc task, **trước** triage và debate:
+
+```bash
+cd .claude/skills/auto-dev/tools
+python clarify.py analyze --type <bugfix|feature> --title "<tiêu đề>" --desc "<mô tả>"
+#   [--backend claude]  escalate cho agent (câu hỏi sát task hơn); mặc định heuristic, không tốn token
+```
+Trả `{verdict, blocking_count, questions:[{category, ask, why, blocking, assumption}]}`:
+- `category` ∈ scope · io · acceptance · edge_case · non_functional.
+- `blocking=true` → **không trả lời thì gần như chắc code sai** (scope / I-O contract / định-nghĩa-done).
+  `blocking=false` → chạy được với giả định mặc định.
+- `verdict=needs_clarification` khi còn câu blocking; `pass` khi không.
+- **Type-aware:** bugfix rõ ràng thường `pass` (AC ngầm = bug hết repro); feature mơ hồ dồn nhiều câu blocking.
+
+**Xử lý (theo mode — đồng bộ gate `clarity` của stage plan):**
+1. **Hỏi câu BLOCKING** cho người dùng (chỉ blocking; phần còn lại để giả định). Ở **auto mode**
+   (tier trivial) thì KHÔNG hỏi — `needs_clarification` làm gate `clarity` **fail → chặn debate**
+   (task quá mơ hồ không được tự chạy). Ở **checkpoint mode** thì hỏi người, gấp câu trả lời.
+2. Gấp trả lời + giả định thành brief:
+   ```bash
+   python clarify.py brief --title "<...>" --desc-file task.txt \
+     --answers-file answers.json --out ../../../temp/runs/<task_id>_brief.md
+   #   answers.json: [{"ask":"...","answer":"..."}, {"ask":"...","assumption":"..."}]
+   ```
+   Brief (`temp/runs/<task_id>_brief.md`) thành `--desc` cho debate; `acceptance_seeds` → `ac-add`.
+3. Ghi gate cho run-log (required trên stage plan):
+   ```bash
+   python ../../dev-automation/tools/run_log.py record-gate <RID> clarity --verdict pass --summary "0 blocking"
+   # còn câu blocking chưa giải -> --verdict fail
+   ```
+
 ## Triage — phân tier/mode (Hybrid autonomy)
 
 Sau khi đọc task, phân loại để chọn mức tự động:
