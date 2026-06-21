@@ -61,6 +61,8 @@ _busy_lock = threading.Lock()
 
 
 # ── session continuity ────────────────────────────────────────────
+# Each chat maps to {"sid", "turns", "started"}. Old files stored a bare sid
+# string; _session_rec() reads both so upgrades are seamless.
 def _load_sessions() -> dict:
     try:
         with open(SESSIONS_FILE, encoding="utf-8") as f:
@@ -69,14 +71,62 @@ def _load_sessions() -> dict:
         return {}
 
 
-def _save_session(chat, sid):
+def _session_rec(chat) -> dict:
+    rec = _load_sessions().get(str(chat))
+    if isinstance(rec, str):          # legacy: bare sid
+        return {"sid": rec, "turns": 0, "started": 0}
+    return rec or {}
+
+
+def _session_sid(chat):
+    return _session_rec(chat).get("sid")
+
+
+def _save_session(chat, sid, account=None):
+    """Persist the latest sid (and which account it belongs to) for a chat.
+    Resuming returns a fresh sid each turn but it's the SAME conversation, so we
+    keep `started`/bump `turns` while the account is unchanged; switching account
+    resets the counters. Pass sid=None to forget the conversation."""
     data = _load_sessions()
-    if sid:
-        data[str(chat)] = sid
+    key = str(chat)
+    if not sid:
+        data.pop(key, None)
     else:
-        data.pop(str(chat), None)
+        prev = data.get(key)
+        prev = prev if isinstance(prev, dict) else {}
+        same = prev.get("account") == account
+        data[key] = {
+            "sid": sid,
+            "account": account,
+            "turns": (prev.get("turns", 0) + 1) if same else 1,
+            "started": (prev.get("started") if same else int(time.time())) or int(time.time()),
+        }
     with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f)
+
+
+# turns past which the context is "long" and a /new is worth suggesting
+LONG_SESSION_TURNS = int(cfg.get("TELEGRAM_LONG_SESSION_TURNS", "20") or "20")
+
+
+def _session_status(chat) -> str:
+    rec = _session_rec(chat)
+    if not rec.get("sid"):
+        return "💤 Chưa có phiên nào. Tin nhắn tới sẽ bắt đầu một phiên mới."
+    turns = rec.get("turns", 0)
+    started = rec.get("started", 0)
+    age = ""
+    if started:
+        mins = max(0, (int(time.time()) - started) // 60)
+        age = f", bắt đầu {mins} phút trước" if mins else ", vừa bắt đầu"
+    msg = (f"🧵 <b>Phiên đang hoạt động</b>\n"
+           f"• Tài khoản: <b>{rec.get('account') or '?'}</b>\n"
+           f"• Số lượt: <b>{turns}</b>{age}\n"
+           f"• ID: <code>{str(rec['sid'])[:8]}…</code>")
+    if turns >= LONG_SESSION_TURNS:
+        msg += ("\n\n⚠️ Phiên đã dài — ngữ cảnh lớn dễ chậm/loãng. "
+                "Gõ <b>/new</b> để bắt đầu sạch.")
+    return msg
 
 
 # ── bridge settings file (attaches the approval hook to spawned agents) ──
@@ -95,6 +145,52 @@ def _claude_bin() -> str:
     return cfg.get("CLAUDE_BIN") or "claude"
 
 
+# ── Claude accounts (cross-platform multi-account with fallback) ──
+# An "account" = a home dir holding its own .claude (creds/config). We switch
+# between them by overriding the home env var per OS (HOME on macOS/Linux,
+# USERPROFILE on Windows) — the same thing the claude-work/personal wrappers do.
+def _base_home() -> str:
+    """The real profile root on any OS, even if the bridge itself runs under a
+    per-account home (…/.claude-work) — strips a trailing .claude-* suffix so we
+    never nest …/.claude-work/.claude-work."""
+    h = os.path.normpath(os.path.expanduser("~"))
+    if os.path.basename(h).startswith(".claude-"):
+        return os.path.dirname(h)
+    return h
+
+
+def _account_home(label: str) -> str:
+    """Resolve a label to a home dir: explicit CLAUDE_HOME_<LABEL> wins, else
+    <base>/.claude-<label> (works the same on Windows/macOS/Linux)."""
+    override = cfg.get(f"CLAUDE_HOME_{label.upper()}")
+    return override or os.path.join(_base_home(), f".claude-{label}")
+
+
+def _accounts() -> list:
+    """Ordered [(label, home)] — primary first, fallbacks after. Driven by
+    CLAUDE_ACCOUNTS (default 'work,personal'). A label is kept only if its home
+    actually has a .claude dir (or is explicitly overridden). If none qualify —
+    e.g. a plain machine with just ~/.claude — fall back to a single 'default'
+    account with home=None (leave the env untouched)."""
+    labels = cfg.get_list("CLAUDE_ACCOUNTS") or ["work", "personal"]
+    out = []
+    for label in labels:
+        override = cfg.get(f"CLAUDE_HOME_{label.upper()}")
+        home = _account_home(label)
+        if override or os.path.isdir(os.path.join(home, ".claude")):
+            out.append((label, home))
+    return out or [("default", None)]
+
+
+def _order_by_current(accounts: list, current: str) -> list:
+    """Keep continuity: if the chat already has a session on `current`, try that
+    account first (its context lives there), then the rest as fallback."""
+    if not current:
+        return accounts
+    cur = [a for a in accounts if a[0] == current]
+    return cur + [a for a in accounts if a[0] != current] if cur else accounts
+
+
 # ── agent execution ───────────────────────────────────────────────
 def _is_stale_session(text: str) -> bool:
     """True if `claude --resume` failed because the session no longer exists."""
@@ -102,9 +198,23 @@ def _is_stale_session(text: str) -> bool:
     return "no conversation found" in t or "session id" in t and "not found" in t
 
 
-def _invoke_claude(chat, text, settings_path, sid):
-    """Run one `claude -p` call. Returns (result_text, new_sid, is_error) or
-    None if the binary is missing / it timed out (already reported to the user)."""
+def _is_account_unavailable(text: str) -> bool:
+    """True if the error looks like the account (not the request) is the problem:
+    usage/rate limit, auth/login, or no credit — i.e. a sibling account may work."""
+    t = (text or "").lower()
+    needles = (
+        "usage limit", "rate limit", "rate_limit", "too many requests",
+        "credit balance", "insufficient", "quota",
+        "please run /login", "/login", "authentication", "invalid api key",
+        "unauthorized", "401", "403", "account",
+    )
+    return any(n in t for n in needles)
+
+
+def _invoke_claude(chat, text, settings_path, sid, home=None):
+    """Run one `claude -p` call under the given account home (USERPROFILE).
+    Returns (result_text, new_sid, is_error) or None if the binary is missing /
+    it timed out (already reported to the user)."""
     argv = [_claude_bin(), "-p", text,
             "--output-format", "json",
             "--append-system-prompt", CHOICE_SYS,
@@ -117,6 +227,9 @@ def _invoke_claude(chat, text, settings_path, sid):
     env = dict(os.environ)
     env["CLAUDE_TG_BRIDGE"] = "1"
     env["CLAUDE_TG_CHAT_ID"] = str(chat)
+    if home:  # select the account: claude reads creds/config from <home>/.claude
+        env["HOME"] = home          # macOS / Linux
+        env["USERPROFILE"] = home   # Windows
 
     try:
         proc = subprocess.run(
@@ -147,27 +260,51 @@ def _invoke_claude(chat, text, settings_path, sid):
 
 
 def _run_agent(chat, text, settings_path):
-    """Run one turn for this chat and send the result back. If a saved session
-    has gone stale, drop it and retry once with a fresh conversation."""
+    """Run one turn: try the chat's current account first (default = primary),
+    falling back to the next account if this one is unavailable (limit/auth).
+    A stale session on an account is dropped and retried fresh on that account."""
     tg_api.send_message(chat, "⏳ <i>Agent đang xử lý…</i>")
     try:
-        sid = _load_sessions().get(str(chat))
-        res = _invoke_claude(chat, text, settings_path, sid)
-        if res is None:
-            return
-        result_text, new_sid, is_error = res
-        if is_error and sid and _is_stale_session(result_text):
-            _save_session(chat, None)
-            tg_api.send_message(chat, "♻️ Phiên cũ không còn, bắt đầu phiên mới…")
-            res = _invoke_claude(chat, text, settings_path, None)
+        rec = _session_rec(chat)
+        cur_account, cur_sid = rec.get("account"), rec.get("sid")
+        accounts = _order_by_current(_accounts(), cur_account)
+
+        for idx, (label, home) in enumerate(accounts):
+            sid = cur_sid if label == cur_account else None
+            res = _invoke_claude(chat, text, settings_path, sid, home)
             if res is None:
                 return
             result_text, new_sid, is_error = res
-        if is_error:
-            result_text = "⚠️ " + str(result_text)
-        if new_sid:
-            _save_session(chat, new_sid)
-        _deliver(chat, result_text or "(agent không trả về nội dung)")
+
+            # session vanished on this account -> retry fresh on the SAME account
+            if is_error and sid and _is_stale_session(result_text):
+                tg_api.send_message(chat, "♻️ Phiên cũ không còn, bắt đầu phiên mới…")
+                res = _invoke_claude(chat, text, settings_path, None, home)
+                if res is None:
+                    return
+                result_text, new_sid, is_error = res
+
+            # account itself unavailable -> try the next one (fresh, no sid carry)
+            if is_error and _is_account_unavailable(result_text) \
+                    and idx < len(accounts) - 1:
+                nxt = accounts[idx + 1][0]
+                tg_api.send_message(
+                    chat, f"⚠️ Tài khoản <b>{label}</b> không khả dụng "
+                    f"(giới hạn/đăng nhập). Chuyển sang <b>{nxt}</b>…")
+                cur_account, cur_sid = None, None
+                continue
+
+            # success, or a terminal error on the last available account
+            if is_error:
+                result_text = "⚠️ " + str(result_text)
+            if new_sid:
+                _save_session(chat, new_sid, label)
+            _deliver(chat, result_text or "(agent không trả về nội dung)")
+            if new_sid and _session_rec(chat).get("turns") == LONG_SESSION_TURNS:
+                tg_api.send_message(chat, "ℹ️ Phiên đã khá dài (đủ "
+                                    f"{LONG_SESSION_TURNS} lượt). Gõ <b>/new</b> nếu "
+                                    "muốn bắt đầu ngữ cảnh sạch.")
+            return
     finally:
         with _busy_lock:
             _busy.discard(str(chat))
@@ -205,14 +342,22 @@ def _handle_command(chat, text) -> bool:
             "Nhắn yêu cầu thường (vd <i>“review MR 123”</i>, <i>“task của tôi”</i>, "
             "<i>“ssh may-build chạy df -h”</i>) → agent xử lý.\n"
             "Thao tác ghi/SSH/nguy hiểm sẽ hỏi duyệt bằng nút bấm.\n\n"
-            "<b>Lệnh:</b> /hosts /reset /whoami")
+            "<b>Lệnh:</b>\n"
+            "• /new — phiên mới (xóa ngữ cảnh, bắt đầu sạch)\n"
+            "• /session — xem phiên hiện tại (số lượt, chạy bao lâu)\n"
+            "• /hosts — danh sách máy SSH\n"
+            "• /whoami — chat_id của bạn")
         return True
     if cmd == "/whoami":
         tg_api.send_message(chat, f"chat_id của bạn: <code>{chat}</code>")
         return True
-    if cmd == "/reset":
+    if cmd in ("/new", "/reset", "/clear"):
         _save_session(chat, None)
-        tg_api.send_message(chat, "🧹 Đã xóa ngữ cảnh. Tin nhắn tới sẽ bắt đầu phiên mới.")
+        tg_api.send_message(chat, "🆕 <b>Đã tạo phiên mới.</b> Ngữ cảnh cũ đã xóa — "
+                            "tin nhắn tới sẽ bắt đầu sạch từ đầu.")
+        return True
+    if cmd == "/session":
+        tg_api.send_message(chat, _session_status(chat))
         return True
     if cmd == "/hosts":
         hosts = ssh_exec.load_hosts()

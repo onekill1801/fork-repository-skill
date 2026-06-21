@@ -45,6 +45,28 @@ CLAUDE_BIN=                             # rỗng = 'claude' trên PATH
    (`read`/`write`/`danger`) — `danger` luôn cần duyệt khi đi qua bridge.
    Chi tiết: `cookbook/ssh-fanout.md`.
 
+### Quản lý phiên (context) trong chat dài
+Mỗi chat giữ một phiên `claude` liên tục (`--resume`) → ngữ cảnh tích lũy qua các lượt. Chat càng dài,
+ngữ cảnh càng lớn (chậm/loãng/tốn token). Lệnh trong Telegram:
+- `/new` (alias `/reset`, `/clear`) — **tạo phiên mới, xóa ngữ cảnh**, bắt đầu sạch.
+- `/session` — xem phiên hiện tại: số lượt + chạy bao lâu + ID rút gọn.
+- Khi phiên chạm `TELEGRAM_LONG_SESSION_TURNS` (mặc định 20) lượt, bridge **tự nhắc một lần** gợi ý `/new`.
+- Phiên hỏng (resume thất bại) → bridge tự rớt về phiên mới và báo `♻️`.
+
+### Nhiều tài khoản Claude + fallback (đa nền tảng)
+Khai báo `CLAUDE_ACCOUNTS=work,personal` (ưu tiên trái→phải). Bridge chạy account đầu; gặp lỗi
+**giới hạn/đăng nhập** (usage/rate limit, `/login`, auth…) → tự **nhảy account kế** và báo `⚠️`.
+- **Đổi account = set biến home theo OS** cho tiến trình `claude`: `HOME` (macOS/Linux) + `USERPROFILE`
+  (Windows) → claude đọc `<home>/.claude` tương ứng. Chạy như nhau trên Windows/Ubuntu/macOS.
+- Mỗi label `X` → home mặc định `<base>/.claude-X`; override bằng `CLAUDE_HOME_X=<đường dẫn tuyệt đối>`.
+- Chỉ giữ account có sẵn `.claude`. Máy thường (chỉ `~/.claude`) → tự dùng account `default`, không cần
+  cấu hình gì.
+- Phiên **gắn account** (sid account này không resume trên account khác) — đổi account thì bắt đầu phiên
+  mới; các lượt sau giữ account đang dùng tới khi `/new`. `/session` cho biết account hiện tại.
+
+> Tương đương trên Unix của `claude-work.cmd`/`claude-personal.cmd`: một script `HOME=$HOME/.claude-work claude …`.
+> Nhưng bridge tự set biến home khi spawn nên **không cần** wrapper để fallback hoạt động.
+
 ### Form lựa chọn (plan/quyết định) → nút bấm
 Agent headless không có giao diện chọn tương tác. Bridge dạy agent (qua `--append-system-prompt`)
 phát một khối `[[TG_CHOICE]] … [[/TG_CHOICE]]` khi cần bạn quyết định; `choices.py` parse khối đó
