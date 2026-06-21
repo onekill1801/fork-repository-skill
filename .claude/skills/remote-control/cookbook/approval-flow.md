@@ -28,11 +28,19 @@ hook nhận verdict → permissionDecision: allow | deny
 đang chờ — nên agent chạy ở **thread riêng**, vòng poll chính không bị khóa.
 
 ## Quy tắc phân loại (telegram_approve.py)
-- **allow ngay**: `Read, Grep, Glob, LS, NotebookRead, WebFetch, WebSearch, TodoWrite`, và `Bash`
-  mà `ssh_exec.classify` cho là `read` (ls, cat, df, git status, docker ps, kubectl get, …).
-- **hỏi duyệt**: `Edit, Write, MultiEdit, NotebookEdit`, `Task` (spawn agent), và `Bash` `write`/`danger`.
-- **mặc định**: tool lạ → hỏi (fail-safe).
-- Lệnh `danger` (rm -rf, mkfs, dd, shutdown, drop table, …) gắn cờ ⚠️ trên thẻ duyệt.
+Mỗi tool được xếp vào 1 nhóm; tự duyệt nếu nhóm có trong `TELEGRAM_AUTO_APPROVE` (mặc định `read,file`).
+Nhóm `danger` **không bao giờ** tự duyệt.
+- **read** — `Read, Grep, Glob, LS, NotebookRead, WebFetch, WebSearch, TodoWrite, Task`, và `Bash`
+  mà `ssh_exec.classify` = `read` (ls, cat, df, git status, docker ps, kubectl get…).
+  (`Task` an toàn để tự duyệt vì tool của sub-agent cũng đi qua hook này.)
+- **file** — `Edit, Write, MultiEdit, NotebookEdit` (sửa/ghi file local).
+- **bash** — `Bash` `write` (git push, restart, **ssh ra máy LAN qua `ssh_exec.py`**, mv, xóa thường…)
+  và tool lạ → hỏi (trừ khi bật `bash` trong auto-approve).
+- **danger** — `Bash` khớp pattern hủy diệt (rm -rf, mkfs, dd, shutdown, drop table…) → LUÔN hỏi,
+  gắn cờ ⚠️ trên thẻ duyệt.
+
+> Lưu ý: lệnh SSH chạy qua tool `Bash` (`python ssh_exec.py run …`) nên rơi vào nhóm `bash`/`danger` —
+> tức mặc định vẫn hỏi duyệt cho mọi thao tác ghi ra máy khác.
 
 ## Fail-safe
 - Telegram gửi lỗi, không có `CLAUDE_TG_CHAT_ID`, hoặc hết `TELEGRAM_APPROVAL_TIMEOUT` giây không bấm

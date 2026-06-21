@@ -30,8 +30,26 @@ import rc_config as cfg  # noqa: E402
 READ_ONLY_TOOLS = {
     "Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch",
     "TodoWrite", "Task",  # Task sub-agents inherit this same hook
+    # Control/UI tools — never touch the filesystem; let them through so a
+    # headless agent isn't blocked waiting on an approval that makes no sense.
+    "AskUserQuestion", "ExitPlanMode",
 }
-WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+FILE_WRITE_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
+# Categories the hook can place a tool call into. 'danger' can NEVER be
+# auto-approved. The rest are auto-approved iff listed in TELEGRAM_AUTO_APPROVE.
+#   read  : read-only tools / read-only Bash
+#   file  : local file edits (Edit/Write/MultiEdit/NotebookEdit)
+#   bash  : Bash writes (git push, service restart, SSH to LAN, deletes, ...)
+#   danger: destructive Bash (rm -rf, mkfs, shutdown, drop table, ...) -> always ask
+DEFAULT_AUTO_APPROVE = "read,file"
+
+
+def _auto_set() -> set:
+    raw = cfg.get("TELEGRAM_AUTO_APPROVE")
+    if raw == "":
+        raw = DEFAULT_AUTO_APPROVE
+    return {p.strip().lower() for p in raw.split(",") if p.strip()}
 
 
 def _out(decision: str, reason: str):
@@ -43,23 +61,27 @@ def _out(decision: str, reason: str):
     sys.exit(0)
 
 
-def _summarize(tool: str, ti: dict):
-    """Return (short_summary, detail, risk) for the Telegram card."""
+def _classify_tool(tool: str, ti: dict):
+    """Return (category, short_summary, detail) — category in read|file|bash|danger."""
     if tool == "Bash":
         cmd = ti.get("command", "")
         try:
             import ssh_exec
-            risk = ssh_exec.classify(cmd)
+            risk = ssh_exec.classify(cmd)  # read | write | danger
         except Exception:  # noqa: BLE001
             risk = "write"
-        return f"Bash: {cmd[:120]}", cmd, risk
-    if tool in WRITE_TOOLS:
+        cat = "read" if risk == "read" else ("danger" if risk == "danger" else "bash")
+        return cat, f"Bash: {cmd[:120]}", cmd
+    if tool in FILE_WRITE_TOOLS:
         path = ti.get("file_path") or ti.get("notebook_path") or "?"
-        return f"{tool} → {path}", path, "write"
+        return "file", f"{tool} → {path}", path
     if tool == "Task":
         desc = ti.get("description", "")
-        return f"Spawn agent: {desc[:100]}", ti.get("prompt", "")[:500], "write"
-    return f"{tool}", json.dumps(ti, ensure_ascii=False)[:500], "write"
+        # sub-agent tool calls are independently gated by this same hook
+        return "read", f"Spawn agent: {desc[:100]}", ti.get("prompt", "")[:500]
+    if tool in READ_ONLY_TOOLS:
+        return "read", tool, json.dumps(ti, ensure_ascii=False)[:300]
+    return "bash", tool, json.dumps(ti, ensure_ascii=False)[:500]
 
 
 def main():
@@ -74,18 +96,13 @@ def main():
     tool = payload.get("tool_name", "")
     ti = payload.get("tool_input", {}) or {}
 
-    # Fast allow path for read-only work.
-    if tool in READ_ONLY_TOOLS and tool != "Task":
-        _out("allow", "read-only tool")
-    if tool == "Bash":
-        try:
-            import ssh_exec
-            if ssh_exec.classify(ti.get("command", "")) == "read":
-                _out("allow", "read-only command")
-        except Exception:  # noqa: BLE001
-            pass
+    category, summary, detail = _classify_tool(tool, ti)
+    risk = "danger" if category == "danger" else ("read" if category == "read" else "write")
 
-    summary, detail, risk = _summarize(tool, ti)
+    # Auto-approve per policy (TELEGRAM_AUTO_APPROVE). 'danger' can never be in it.
+    if category != "danger" and category in _auto_set():
+        _out("allow", f"auto-approve ({category})")
+
     chat = os.environ.get("CLAUDE_TG_CHAT_ID") or cfg.get_list("TELEGRAM_ALLOWED_CHATS")[:1]
     if isinstance(chat, list):
         chat = chat[0] if chat else ""

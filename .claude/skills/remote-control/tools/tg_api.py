@@ -88,10 +88,53 @@ def call(method: str, params: dict, timeout: int = 35) -> dict:
         return {"ok": False, "description": str(e)}
 
 
+def _split_at(text: str) -> int:
+    """Pick a cut point <= MAX_LEN that does NOT land inside an HTML tag.
+
+    Telegram's HTML parser rejects a chunk whose `<...>` tag is cut in half
+    ("Bad Request: can't parse entities"). We prefer the last newline in the
+    final 25% of the window, then the last tag boundary ('>'), then a hard cut.
+    """
+    if len(text) <= MAX_LEN:
+        return len(text)
+    window = text[:MAX_LEN]
+    nl = window.rfind("\n", MAX_LEN * 3 // 4)
+    if nl != -1:
+        return nl + 1
+    gt = window.rfind(">")
+    lt = window.rfind("<")
+    if lt > gt:           # window ends inside an unclosed tag -> cut before it
+        return lt
+    return MAX_LEN
+
+
 def _chunks(text: str):
     while text:
-        yield text[:MAX_LEN]
-        text = text[MAX_LEN:]
+        cut = _split_at(text)
+        yield text[:cut]
+        text = text[cut:]
+
+
+_BALANCE_TAGS = ("pre", "code", "b", "i", "u", "s")
+
+
+def _balance(parts: list) -> list:
+    """Keep each chunk's HTML valid on its own: close tags still open at a
+    chunk's end, and reopen them at the next chunk's start. Telegram parses
+    every message independently, so an unclosed <pre> would break the parse."""
+    if not parts:
+        return parts
+    out, carry = [], ""
+    for part in parts:
+        body = carry + part
+        reopen = ""
+        for tag in _BALANCE_TAGS:
+            if body.count(f"<{tag}>") > body.count(f"</{tag}>"):
+                body += f"</{tag}>"
+                reopen += f"<{tag}>"
+        out.append(body)
+        carry = reopen
+    return out
 
 
 def send_message(chat_id, text: str, reply_markup=None,
@@ -99,6 +142,8 @@ def send_message(chat_id, text: str, reply_markup=None,
     """Send text (auto-chunked). Markup is only attached to the last chunk."""
     text = text if text.strip() else "(trống)"
     parts = list(_chunks(text)) or [""]
+    if parse_mode == "HTML":
+        parts = _balance(parts)
     last = {}
     for i, part in enumerate(parts):
         params = {
@@ -144,6 +189,16 @@ def approve_keyboard(req_id: str) -> dict:
         {"text": "✅ Duyệt", "callback_data": f"appr:{req_id}:yes"},
         {"text": "❌ Từ chối", "callback_data": f"appr:{req_id}:no"},
     ]]}
+
+
+def choices_keyboard(token: str, options: list, per_row: int = 4) -> dict:
+    """Compact numbered selector — the full option text is shown in the message
+    body, so buttons are just the numbers (up to `per_row` per row). The choice
+    is resolved by index server-side, keeping callback_data tiny (<64 bytes)."""
+    btns = [{"text": str(i + 1), "callback_data": f"choice:{token}:{i}"}
+            for i in range(len(options))]
+    return {"inline_keyboard": [btns[i:i + per_row]
+                                for i in range(0, len(btns), per_row)]}
 
 
 if __name__ == "__main__":
