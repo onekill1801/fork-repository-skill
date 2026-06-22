@@ -45,6 +45,18 @@ python jenkins.py build --job my-service --param BRANCH=develop --wait
 python jenkins.py console --job my-service --number 42 --tail 40
 ```
 
+> **Chờ-nền dưới Telegram bridge** — ĐỪNG spawn poll nền rồi kết thúc lượt với câu
+> "mình sẽ tự báo khi xong": phiên `claude -p` headless thoát ngay khi lượt kết thúc →
+> tiến trình nền mồ côi, KHÔNG còn agent để báo về (bạn sẽ không nhận được gì). Với mọi
+> tác vụ dài (jenkins build, compile, test…) hãy bọc bằng `bg_notify.py` — nó tách rời
+> khỏi `claude -p`, chạy tới khi xong rồi TỰ gửi kết quả (✅/❌ + thời lượng) về Telegram:
+> ```
+> python bg_notify.py --label "Build dev etask" -- python jenkins.py build --project etask --env dev --wait
+> python bg_notify.py --label "Compile/test etask" -- python test_runner.py run --project etask --kind test
+> ```
+> In ngay `{"detached": true, …}` → báo người dùng "đã chạy nền, sẽ nhắn khi xong" rồi
+> KẾT THÚC lượt. (Tự bật khi env `CLAUDE_TG_BRIDGE=1`; chạy tay thì mặc định đồng bộ.)
+
 Mọi probe trả JSON `{"passed": bool, ..., "checks": [...]}`. `passed:false` là **assertion
 fail** (đọc `checks`), khác với `{"error": true}` là **không chạy được** (mất kết nối/thiếu config/thiếu CLI).
 

@@ -74,6 +74,24 @@ phát một khối `[[TG_CHOICE]] … [[/TG_CHOICE]]` khi cần bạn quyết đ
 - Một lượt chỉ một khối lựa chọn (tối đa 8 phương án). Bấm lại nút cũ không kích hoạt lại (idempotent).
 - Không có khối → trả lời text bình thường.
 
+### Tác vụ dài / chờ-nền (build, compile, test) → `bg_notify.py`
+Mỗi tin nhắn = một phiên `claude -p` **headless one-shot**: agent kết thúc lượt là tiến
+trình thoát NGAY. Vì vậy mẫu "spawn poll nền rồi hẹn báo sau" (vốn chạy được trong Claude
+Code tương tác nhờ `<task-notification>`) sẽ **HỎNG dưới bridge**: tiến trình nền mồ côi,
+không còn agent sống để báo về → người dùng không nhận được kết quả khi build/compile xong.
+
+→ Với mọi tác vụ dài, agent phải dùng `dev-automation/tools/bg_notify.py`: nó tách rời khỏi
+`claude -p` (Windows DETACHED_PROCESS / POSIX setsid), chạy lệnh tới khi xong rồi **tự gửi
+kết quả** (✅/❌ + nhãn + thời lượng + đuôi log) thẳng về chat Telegram. Agent in `{"detached":
+true,…}`, báo "đã chạy nền, sẽ nhắn khi xong" rồi kết thúc lượt — KHÔNG block, KHÔNG hẹn suông.
+```
+python bg_notify.py --label "Build dev etask" -- python jenkins.py build --project etask --env dev --wait
+```
+- Chat đích lấy từ env `CLAUDE_TG_CHAT_ID` (bridge set sẵn cho agent). Tự bật tách rời khi
+  `CLAUDE_TG_BRIDGE=1`; chạy tay ngoài bridge thì mặc định đồng bộ (debug), không có chat → chỉ ghi log.
+- Đoán SUCCESS/FAILURE từ JSON `passed`/`result`/`error` (không chỉ dựa exit code — `jenkins.py`
+  trả exit 0 cả khi build FAILURE).
+
 ### Luồng duyệt (đọc trước khi sửa hook)
 - PreToolUse hook `telegram_approve.py` CHỈ kích hoạt khi `CLAUDE_TG_BRIDGE=1` (bridge tự đặt khi
   spawn agent). Phiên Claude Code tương tác của bạn KHÔNG bị ảnh hưởng.
