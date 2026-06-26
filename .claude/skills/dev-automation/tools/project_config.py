@@ -56,7 +56,8 @@ _FLAT = {
 # Nested section -> {registry key -> environment variable}.
 _NESTED = {
     "db": {"host": "DB_HOST", "port": "DB_PORT", "user": "DB_USER",
-           "password": "DB_PASSWORD", "name": "DB_NAME"},
+           "password": "DB_PASSWORD", "name": "DB_NAME",
+           "engine": "DB_ENGINE", "schema": "DB_SCHEMA"},
     "redis": {"host": "REDIS_HOST", "port": "REDIS_PORT",
               "password": "REDIS_PASSWORD", "db": "REDIS_DB"},
     "jenkins": {"url": "JENKINS_URL", "user": "JENKINS_USER", "token": "JENKINS_TOKEN"},

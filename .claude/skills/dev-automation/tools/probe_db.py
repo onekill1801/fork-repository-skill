@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Database probe for the stack-verify toolkit (PostgreSQL + MySQL/MariaDB).
 
-Runs a SQL query by wrapping the native CLI client (psql / mysql) via subprocess
-— no pip drivers (stdlib only). Asserts on the result: row count, first value,
-emptiness, or substring containment.
+Runs a SQL query and asserts on the result: row count, first value, emptiness, or
+substring containment. No pip drivers (stdlib only).
+
+Both engines talk the wire protocol directly over a socket — NO external CLI
+(psql/mysql), same zero-dependency stance as probe_redis (RESP) / probe_kafka (HTTP):
+  - MySQL/MariaDB (mysql_client.py): auth mysql_native_password (5.7 / MariaDB default).
+  - PostgreSQL (postgres_client.py): auth SCRAM-SHA-256 / MD5 / cleartext (PG 10+ default
+    is SCRAM). Use --schema to set search_path. Both are non-TLS (for TLS use the CLI).
 
 Connection (via .env / env, see config.py); flags override env:
     DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME      (generic, used by both)
-  PostgreSQL also accepts:  PG_URL  (a full libpq URL: postgresql://...)
+  PostgreSQL also accepts:  PG_URL  (a full libpq URL: postgresql://user:pw@host/db
+    ?currentSchema=...), parsed for host/port/user/password/db/schema.
   Engine default port: postgres=5432, mysql=3306.
-
-Requires the matching CLI on PATH: `psql` for postgres, `mysql` for mysql.
 
 Usage:
     python probe_db.py query --engine postgres \
@@ -26,16 +30,16 @@ Output: a single JSON object.
 """
 
 import argparse
-import os
-import subprocess
 import sys
+from urllib.parse import urlparse, parse_qs
 
 import config
 import project_config
 import probe_common as pc
+import mysql_client
+import postgres_client
 
 DEFAULT_PORT = {"postgres": "5432", "mysql": "3306"}
-_MASK = "***"
 
 
 def _conn(args) -> dict:
@@ -48,34 +52,76 @@ def _conn(args) -> dict:
     }
 
 
-def _build(args, c) -> tuple[list, dict, str]:
-    """Return (argv, extra_env, masked_command_string)."""
-    if args.engine == "postgres":
-        env = dict(os.environ)
-        pg_url = config.get("PG_URL")
-        if pg_url:
-            argv = ["psql", pg_url, "-tAF", "|", "-c", args.sql]
-            masked = f"psql {pg_url.split('@')[-1] if '@' in pg_url else pg_url} -tAF '|' -c '<sql>'"
-        else:
-            env.update({
-                "PGHOST": c["host"], "PGPORT": str(c["port"]),
-                "PGUSER": c["user"] or "", "PGPASSWORD": c["password"] or "",
-                "PGDATABASE": c["name"] or "",
-            })
-            argv = ["psql", "-tAF", "|", "-c", args.sql]
-            masked = f"PGPASSWORD={_MASK} psql -h {c['host']} -p {c['port']} -U {c['user']} -d {c['name']} -tAF '|' -c '<sql>'"
-        return argv, env, masked
+def _pg_params(args, c) -> dict:
+    """Postgres connection params: a full PG_URL (libpq URL) wins, else the flat
+    DB_* / flags in `c`. --schema (or currentSchema/search_path in the URL) sets the
+    search_path so unqualified table names resolve to the right schema."""
+    schema = getattr(args, "schema", None) or config.get("DB_SCHEMA") or None
+    pg_url = config.get("PG_URL")
+    if pg_url:
+        u = urlparse(pg_url)
+        q = parse_qs(u.query)
+        schema = schema or (q.get("currentSchema") or q.get("search_path") or [None])[0]
+        return {"host": u.hostname or c["host"], "port": u.port or c["port"],
+                "user": u.username or c["user"], "password": u.password or c["password"],
+                "name": u.path.lstrip("/") or c["name"], "schema": schema}
+    return {"host": c["host"], "port": c["port"], "user": c["user"],
+            "password": c["password"], "name": c["name"], "schema": schema}
 
-    # mysql / mariadb — password via MYSQL_PWD env (keeps it off the cmdline)
-    env = dict(os.environ)
-    if c["password"]:
-        env["MYSQL_PWD"] = c["password"]
-    argv = ["mysql", "-h", c["host"], "-P", str(c["port"]), "-u", c["user"] or "",
-            "-N", "-B", "-e", args.sql]
-    if c["name"]:
-        argv.append(c["name"])
-    masked = f"MYSQL_PWD={_MASK} mysql -h {c['host']} -P {c['port']} -u {c['user']} -N -B -e '<sql>' {c['name'] or ''}".strip()
-    return argv, env, masked
+
+def _masked(args, c) -> str:
+    """The connection string we print (secrets masked) — for dry-run + results."""
+    if args.engine == "mysql":
+        return (f"mysql(stdlib socket) {c['host']}:{c['port']}/{c['name'] or ''} "
+                f"user={c['user'] or ''} -e '<sql>'")
+    p = _pg_params(args, c)
+    sch = f" search_path={p['schema']}" if p.get("schema") else ""
+    return (f"postgres(stdlib socket) {p['host']}:{p['port']}/{p['name'] or ''} "
+            f"user={p['user'] or ''}{sch} -c '<sql>'")
+
+
+def _run_sql(args, c, sql) -> tuple:
+    """Execute `sql`, returning (rows, masked, error_dict|None).
+
+    Both engines speak the wire protocol over a socket — NO external CLI:
+      mysql    -> mysql_client    (mysql_native_password)
+      postgres -> postgres_client (SCRAM-SHA-256 / MD5 / cleartext)
+    rows is list[list[str|None]]; error_dict (if any) is ready to emit as-is.
+    """
+    masked = _masked(args, c)
+
+    if args.engine == "mysql":
+        try:
+            cli = mysql_client.connect(c["host"], c["port"], c["user"],
+                                       c["password"], c["name"], timeout=args.timeout)
+        except (mysql_client.MySQLError, OSError) as e:
+            return None, masked, {"error": True, "passed": False, "engine": "mysql",
+                                  "command": masked, "message": f"mysql connect failed: {e}"}
+        try:
+            rows = cli.query(sql)
+        except mysql_client.MySQLError as e:
+            return None, masked, {"error": True, "passed": False, "engine": "mysql",
+                                  "command": masked, "message": str(e)}
+        finally:
+            cli.close()
+        return rows, masked, None
+
+    # postgres
+    p = _pg_params(args, c)
+    try:
+        cli = postgres_client.connect(p["host"], p["port"], p["user"], p["password"],
+                                      p["name"], schema=p["schema"], timeout=args.timeout)
+    except (postgres_client.PgError, OSError) as e:
+        return None, masked, {"error": True, "passed": False, "engine": "postgres",
+                              "command": masked, "message": f"postgres connect failed: {e}"}
+    try:
+        rows = cli.query(sql)
+    except postgres_client.PgError as e:
+        return None, masked, {"error": True, "passed": False, "engine": "postgres",
+                              "command": masked, "message": str(e)}
+    finally:
+        cli.close()
+    return rows, masked, None
 
 
 _READ_ONLY_SQL = ("select", "show", "explain", "desc", "describe", "values", "with")
@@ -87,37 +133,20 @@ def _is_write_sql(sql: str) -> bool:
     return first not in _READ_ONLY_SQL
 
 
-def _parse_rows(stdout: str, engine: str) -> list:
-    sep = "|" if engine == "postgres" else "\t"
-    rows = []
-    for line in stdout.splitlines():
-        if line == "":
-            continue
-        rows.append(line.split(sep))
-    return rows
-
-
 def cmd_query(args) -> dict:
     c = _conn(args)
-    argv, env, masked = _build(args, c)
 
     if args.dry_run:
-        return {"dry_run": True, "engine": args.engine, "command": masked, "sql": args.sql}
+        return {"dry_run": True, "engine": args.engine, "command": _masked(args, c), "sql": args.sql}
 
-    try:
-        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=args.timeout)
-    except FileNotFoundError:
-        cli = "psql" if args.engine == "postgres" else "mysql"
-        return {"error": True, "passed": False, "message": f"'{cli}' not found on PATH"}
-    except subprocess.TimeoutExpired:
-        return {"error": True, "passed": False, "message": f"query timed out after {args.timeout}s"}
+    rows, masked, err = _run_sql(args, c, args.sql)
+    if err:
+        return err
 
-    if proc.returncode != 0:
-        return {"error": True, "passed": False, "engine": args.engine,
-                "command": masked, "message": (proc.stderr or proc.stdout)[-1000:]}
-
-    rows = _parse_rows(proc.stdout, args.engine)
     first_value = rows[0][0] if rows and rows[0] else None
+    # Flat text of the result set for substring containment (cells joined by '|').
+    stdout_text = "\n".join("|".join("" if cell is None else str(cell) for cell in row)
+                            for row in rows)
 
     checks = []
     if args.expect_rows is not None:
@@ -131,7 +160,7 @@ def cmd_query(args) -> dict:
                        "actual": first_value, "passed": ok})
     for substr in args.expect_contains or []:
         checks.append({"check": "contains", "expected": substr,
-                       "passed": substr in proc.stdout})
+                       "passed": substr in stdout_text})
 
     passed = all(ch["passed"] for ch in checks) if checks else True
     return {
@@ -169,42 +198,32 @@ def cmd_check_db(args) -> dict:
     """
     c = _conn(args)
     ident_sql = "select current_database()" if args.engine == "postgres" else "select database()"
-    probe_args = argparse.Namespace(
-        engine=args.engine, sql=ident_sql, host=args.host, port=args.port,
-        user=args.user, password=args.password, name=args.name,
-        dry_run=args.dry_run, timeout=args.timeout)
-    argv, env, masked = _build(probe_args, c)
     if args.dry_run:
-        return {"dry_run": True, "engine": args.engine, "command": masked,
+        return {"dry_run": True, "engine": args.engine, "command": _masked(args, c),
                 "expected_database": args.expect_db}
-    try:
-        proc = subprocess.run(argv, env=env, capture_output=True, text=True, timeout=args.timeout)
-    except FileNotFoundError:
-        cli = "psql" if args.engine == "postgres" else "mysql"
-        return {"error": True, "passed": False, "message": f"'{cli}' not found on PATH"}
-    except subprocess.TimeoutExpired:
-        return {"error": True, "passed": False,
-                "message": f"connectivity check timed out after {args.timeout}s"}
-    if proc.returncode != 0:
-        return {"error": True, "passed": False, "engine": args.engine, "command": masked,
-                "message": ("cannot connect to database (does it exist / is the isolated DB "
-                            "provisioned?): " + (proc.stderr or proc.stdout)[-500:])}
-    rows = _parse_rows(proc.stdout, args.engine)
+    rows, masked, err = _run_sql(args, c, ident_sql)
+    if err:
+        # Make the failure check-db-specific: a missing/unprovisioned isolated DB.
+        err["message"] = ("cannot connect / identify database (does it exist / is the "
+                          "isolated DB provisioned?): " + err.get("message", ""))
+        return err
     current = rows[0][0] if rows and rows[0] else None
     return _check_db_verdict(current, args.expect_db, args.engine, masked)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="DB probe (psql/mysql CLI wrapper)")
+    parser = argparse.ArgumentParser(description="DB probe (stdlib socket: mysql + postgres)")
     sub = parser.add_subparsers(dest="action", required=True)
     p = sub.add_parser("query")
-    p.add_argument("--engine", required=True, choices=["postgres", "mysql"])
+    p.add_argument("--engine", choices=["postgres", "mysql"],
+                   help="postgres|mysql (default: db.engine from --project, else required)")
     p.add_argument("--sql", required=True)
     p.add_argument("--host")
     p.add_argument("--port")
     p.add_argument("--user")
     p.add_argument("--password")
     p.add_argument("--name", help="database name")
+    p.add_argument("--schema", help="postgres: set search_path to this schema")
     p.add_argument("--expect-rows", type=int)
     p.add_argument("--expect-empty", action="store_true")
     p.add_argument("--expect-value", help="match the first cell of the first row ('*'=any)")
@@ -216,7 +235,8 @@ def main() -> int:
     p.add_argument("--timeout", type=int, default=60)
 
     c = sub.add_parser("check-db", help="assert the (isolated) DB is reachable and is the expected one")
-    c.add_argument("--engine", required=True, choices=["postgres", "mysql"])
+    c.add_argument("--engine", choices=["postgres", "mysql"],
+                   help="postgres|mysql (default: db.engine from --project, else required)")
     c.add_argument("--expect-db", help="isolated DB name that MUST be the connected one "
                                        "(e.g. etask_task_123); mismatch -> error, not pass")
     c.add_argument("--host")
@@ -224,6 +244,7 @@ def main() -> int:
     c.add_argument("--user")
     c.add_argument("--password")
     c.add_argument("--name", help="database name to connect to")
+    c.add_argument("--schema", help="postgres: set search_path to this schema")
     c.add_argument("--dry-run", action="store_true")
     c.add_argument("--project", help="load this project's stack config from ./work/projects.json")
     c.add_argument("--env", help="environment (local|dev|uat|sandbox|prod); default from project")
@@ -234,11 +255,28 @@ def main() -> int:
         err = project_config.apply_args(args, mutating=False)
         if err:
             return pc.emit(err)
+        if (err := _resolve_engine(args)):
+            return pc.emit(err)
         return pc.emit(cmd_check_db(args))
+    # Engine may come from the registry (db.engine), so resolve write-vs-read on SQL only.
     err = project_config.apply_args(args, mutating=_is_write_sql(args.sql))
     if err:
         return pc.emit(err)
+    if (err := _resolve_engine(args)):
+        return pc.emit(err)
     return pc.emit(cmd_query(args))
+
+
+def _resolve_engine(args):
+    """Fill args.engine from the registry (DB_ENGINE injected by --project) if the flag
+    was omitted. Returns an error dict if neither yields a valid engine."""
+    if not args.engine:
+        args.engine = config.get("DB_ENGINE") or None
+    if args.engine not in ("postgres", "mysql"):
+        return {"error": True, "passed": False,
+                "message": "no DB engine: pass --engine postgres|mysql "
+                           "(or set db.engine for --project in work/projects.json)"}
+    return None
 
 
 if __name__ == "__main__":

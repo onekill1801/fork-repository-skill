@@ -17,11 +17,16 @@ cd .claude/skills/dev-automation/tools
 python probe_api.py call --method POST --url /api/users \
   --body '{"name":"A"}' --expect-status 201 --expect-json '$.status=ACTIVE' --save 'uid=$.id'
 
-# DB — chạy query, assert số dòng/giá trị (psql/mysql phải có trên PATH)
+# DB — chạy query, assert số dòng/giá trị. KHÔNG cần psql/mysql CLI (socket thuần stdlib).
 python probe_db.py query --engine postgres --sql "select status from users where id=42" \
-  --expect-rows 1 --expect-value ACTIVE
+  --schema drive --expect-rows 1 --expect-value ACTIVE       # --schema = set search_path (postgres)
 python probe_db.py query --engine mysql --sql "select count(*) from orders" --expect-value 0
 python probe_db.py query --engine postgres --sql "..." --dry-run   # xem lệnh, mask mật khẩu
+
+# DB pre-flight — assert kết nối ĐÚNG database (cho env cô lập / isolated DB).
+# Isolation chỉ ĐỔI TÊN db trong config, KHÔNG tạo db; check-db xác nhận db tồn tại
+# VÀ đang nối đúng db kỳ vọng — sai/thiếu db trả {"error":true} (không tính là pass).
+python probe_db.py check-db --engine postgres --expect-db etask_task_123
 
 # Redis — kiểm cache
 python probe_redis.py get user:42 --expect-exists
@@ -32,17 +37,23 @@ python probe_redis.py exists cart:42 --expect-missing
 python probe_kafka.py produce --topic user.created --value '{"uid":42}'
 python probe_kafka.py consume --topic user.created --timeout 15 --expect-contains '"uid":42'
 
-# Kafka qua Provectus Kafka UI (KHÔNG phải REST Proxy) — read-only, login form + cookie
+# Kafka qua Provectus Kafka UI (KHÔNG phải REST Proxy) — login form + cookie.
+# Hầu hết là đọc; chỉ `produce` là ghi (bị prod-guard chặn nếu env protected).
 python kafka_ui.py login-check                       # xác thực phiên
 python kafka_ui.py clusters                          # list cluster + status
-python kafka_ui.py topics  --cluster <c>             # list topic
+python kafka_ui.py topics  --cluster <c>             # list topic (--expect-contains-topic <t>)
+python kafka_ui.py topic   --cluster <c> --topic <t> # mô tả 1 topic (partitions/replication)
 python kafka_ui.py messages --cluster <c> --topic <t> --from latest --limit 20 \
   --expect-contains '"status":"accepted"' --expect-min-count 1
 # --from latest = message mới nhất (mặc định) | beginning = từ đầu topic
+python kafka_ui.py produce --cluster <c> --topic <t> --value '{"uid":42}' --key 42  # [WRITE]
 
-# Jenkins — chạy pipeline CI/CD, chờ kết quả
-python jenkins.py build --job my-service --param BRANCH=develop --wait
+# Jenkins — chạy pipeline CI/CD, chờ kết quả (+ discovery read-only)
+python jenkins.py build   --job my-service --param BRANCH=develop --wait
+python jenkins.py status  --job my-service --number 42        # đọc trạng thái 1 build
 python jenkins.py console --job my-service --number 42 --tail 40
+python jenkins.py info    --job my-service                    # đọc: last/last-successful build #
+python jenkins.py jobs                                        # đọc: liệt kê job/folder (discovery)
 ```
 
 > **Chờ-nền dưới Telegram bridge** — ĐỪNG spawn poll nền rồi kết thúc lượt với câu
@@ -101,7 +112,7 @@ Mẫu: `auto-dev/scenarios/example-create-user.json` (API tạo user → DB → 
 | type | field chính | expect |
 |---|---|---|
 | `api` | method, url, body, headers, saveFrom`{var:$.path}` | status, json`{$.path:val}`, contains[] |
-| `db` | engine(postgres\|mysql), sql | rows, value, empty, contains[] |
+| `db` | engine(postgres\|mysql), sql, database | rows, value, empty, contains[] |
 | `redis` | op(get/exists/ttl/keys/set/del), key, value, ex | exists, missing, value, ttl_min, count |
 | `kafka` | op(produce/consume), topic, value, timeout | contains, json`"$.p=v"`, min_count |
 | `jenkins` | job/path, params`{}`, wait, timeout | (passed = build SUCCESS) |
@@ -154,10 +165,12 @@ Thao tác **ghi** vào env trong `protected_envs` bị **từ chối**, trừ kh
 | probe_db | SQL không bắt đầu bằng select/show/explain/desc/values/with |
 | probe_redis | op = set / del |
 | probe_kafka | produce |
+| kafka_ui | produce (các lệnh khác đều đọc) |
 | jenkins | trigger / build |
 | flow_check | bất kỳ step nào ở trên |
 
-Thao tác **đọc** (GET, select, redis get/exists/ttl, kafka consume, jenkins status/console)
+Thao tác **đọc** (GET, select, redis get/exists/ttl, kafka consume, jenkins
+status/console/info/jobs, kafka_ui clusters/topics/messages, probe_db check-db)
 vào prod **luôn được phép**. Pipeline auto-dev nên test ở dev/uat/sandbox; chỉ đụng prod khi
 thật sự cần và có `--allow-prod` (tương đương xác nhận thủ công theo guardrail CLAUDE.md).
 
@@ -186,7 +199,12 @@ thật sự cần và có `--allow-prod` (tương đương xác nhận thủ cô
 
 - Probe cần **service test đang chạy** (DB/Redis/Kafka REST/API/Jenkins reachable). Thiếu →
   probe trả `{"error":true}`; coi đó là "chưa kiểm được", không phải "đạt".
-- `psql`/`mysql` phải có trên PATH của máy/runner (ràng buộc stdlib → bọc CLI).
-- Kafka dùng **Confluent REST Proxy**; nếu hạ tầng dùng cơ chế khác, cần bổ sung probe.
+- DB: **KHÔNG cần CLI `psql`/`mysql`** — `probe_db` nói chuyện trực tiếp qua socket như
+  probe_redis/kafka. MySQL/MariaDB qua `mysql_client.py` (auth `mysql_native_password`);
+  PostgreSQL qua `postgres_client.py` (auth SCRAM-SHA-256 / MD5 / cleartext, PG 10+ default
+  là SCRAM; `--schema` đặt search_path). Cả hai **non-TLS** — cần TLS thì dùng CLI riêng.
+- Kafka: hai cơ chế đã hỗ trợ — **Confluent REST Proxy** (`probe_kafka.py`, produce+consume,
+  `KAFKA_REST_URL`) và **Provectus Kafka UI** (`kafka_ui.py`, đọc + produce, login form
+  `KAFKA_UI_URL/USER/PASSWORD`). Chọn theo hạ tầng thật; hạ tầng khác nữa thì bổ sung probe.
 - FPT-chat notification: **chưa làm** (hoãn theo quyết định). Khi cần, thêm `fpt_chat.py`
   theo pattern `notifier.py`.

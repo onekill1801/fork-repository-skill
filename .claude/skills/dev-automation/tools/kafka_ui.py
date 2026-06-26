@@ -6,8 +6,10 @@ REST Proxy — so probe_kafka.py does not apply. This tool logs in with the LOGI
 flow (username/password -> session cookie) and reads clusters / topics / messages
 through Kafka UI's own REST API.
 
-Read-only by design: list clusters, list/inspect topics, read recent messages, and
-assert on them. No produce/delete here (keep it safe).
+Mostly read-only: list clusters, list/inspect topics, read recent messages, and
+assert on them. `produce` is the one WRITE op (send a test message) — it is guarded
+by the project_config prod-guard (refused against a protected env without --allow-prod),
+so reads against any env are safe and writes against prod are blocked by default.
 
 Config (via .env / env, see config.py):
     KAFKA_UI_URL          base URL, e.g. https://kafka-ui.example.com
@@ -22,6 +24,7 @@ Usage:
     python kafka_ui.py topic --cluster <name> --topic <t>
     python kafka_ui.py messages --cluster <name> --topic <t> --limit 20 \
         --expect-contains '"uid":42' --expect-min-count 1
+    python kafka_ui.py produce --cluster <name> --topic <t> --value '{"uid":42}' --key 42
     python kafka_ui.py login-check        # just verify auth works
 
 Output: a single JSON object.

@@ -5,8 +5,9 @@ Reports the OS, Python, and which external CLIs are available, then maps that to
 which toolkit features are ready. Works on Windows, macOS and Ubuntu/Linux.
 
 Most tools are pure stdlib (urllib/socket) and run anywhere; a few wrap native
-CLIs (psql/mysql for probe_db, mvn/npm/... for test_runner, a terminal emulator
-for fork_terminal) — this tells you what's missing per machine.
+CLIs (mvn/npm/... for test_runner, a terminal emulator for fork_terminal) — this
+tells you what's missing per machine. probe_db now talks MySQL & Postgres over a
+socket directly, so psql/mysql are optional.
 
 Zero external dependencies.
 
@@ -42,8 +43,8 @@ CLI_CHECKS = {
     "node": "Node runtime",
     "go": "test_runner (Go projects)",
     "pytest": "test_runner (Python projects)",
-    "psql": "probe_db --engine postgres",
-    "mysql": "probe_db --engine mysql",
+    "psql": "optional — probe_db --engine postgres uses a stdlib socket client (no CLI needed)",
+    "mysql": "optional — probe_db --engine mysql uses a stdlib socket client (no CLI needed)",
     "kcat": "Kafka CLI (optional; probe_kafka uses REST/HTTP instead)",
     "docker": "local container builds (usually done on CI)",
     "kubectl": "k8s ops (usually done on CI)",
@@ -53,6 +54,7 @@ CLI_CHECKS = {
 STDLIB_TOOLS = [
     "azure_devops.py", "gitlab_api.py", "notifier.py",        # dev-automation core
     "probe_api.py", "probe_redis.py", "probe_kafka.py",        # stack-verify (HTTP/socket)
+    "probe_db.py (mysql + postgres via socket — no CLI)",
     "jenkins.py", "kafka_ui.py", "flow_check.py",
     "run_log.py", "postman_gen.py", "test_runner.py",
     "etask-automation/*",

@@ -81,13 +81,15 @@ def _run_db(step) -> dict:
     expect = step.get("expect", {})
     ns = _ns(
         {"engine": "postgres", "sql": None, "host": None, "port": None,
-         "user": None, "password": None, "name": None,
+         "user": None, "password": None, "name": None, "schema": None,
          "expect_rows": expect.get("rows"), "expect_empty": bool(expect.get("empty")),
          "expect_value": expect.get("value"), "expect_contains": expect.get("contains"),
          "dry_run": False, "timeout": 60},
         step, {"engine": "engine", "sql": "sql", "host": "host", "port": "port",
-               "user": "user", "password": "password", "name": "name"},
+               "user": "user", "password": "password", "name": "database", "schema": "schema"},
     )
+    # The DB name comes from the step's "database" key — NOT "name", which is the
+    # universal step LABEL (mapping it here would connect to a DB named after the label).
     return probe_db.cmd_query(ns)
 
 

@@ -56,6 +56,18 @@ def _base() -> str:
     return url.rstrip("/")
 
 
+def _base_for(dry_run: bool) -> str:
+    """Like _base(), but a --dry-run preview never needs a live config — it only
+    prints the request it WOULD send, so an unset URL falls back to a placeholder
+    instead of erroring out."""
+    try:
+        return _base()
+    except ValueError:
+        if dry_run:
+            return "<KAFKA_REST_URL-not-set>"
+        raise
+
+
 def _req(method: str, url: str, body=None, accept: str = _JSON_V2, content_type: str = _JSON_V2):
     headers = {"Accept": accept}
     if body is not None:
@@ -72,7 +84,7 @@ def _req(method: str, url: str, body=None, accept: str = _JSON_V2, content_type:
 
 
 def cmd_produce(args) -> dict:
-    base = _base()
+    base = _base_for(args.dry_run)
     url = f"{base}/topics/{args.topic}"
     try:
         value = json.loads(args.value)
@@ -102,7 +114,7 @@ def _new_consumer(base, group, instance):
 
 
 def cmd_consume(args) -> dict:
-    base = _base()
+    base = _base_for(args.dry_run)
     group = args.group
     instance = f"probe-{args.topic}-{os.getpid()}-{int(time.time())}"
 
