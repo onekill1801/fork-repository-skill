@@ -168,7 +168,7 @@ def cmd_query(args) -> dict:
         "engine": args.engine,
         "rows": len(rows),
         "first_value": first_value,
-        "sample": rows[:5],
+        "sample": rows[:getattr(args, "max_rows", 5)],
         "checks": checks,
         "command": masked,
     }
@@ -224,6 +224,8 @@ def main() -> int:
     p.add_argument("--password")
     p.add_argument("--name", help="database name")
     p.add_argument("--schema", help="postgres: set search_path to this schema")
+    p.add_argument("--max-rows", type=int, default=5,
+                   help="how many rows to return in 'sample' (default 5; raise to browse data)")
     p.add_argument("--expect-rows", type=int)
     p.add_argument("--expect-empty", action="store_true")
     p.add_argument("--expect-value", help="match the first cell of the first row ('*'=any)")
