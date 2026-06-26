@@ -55,6 +55,31 @@ CHOICE_SYS = (
     "Mỗi phương án một dòng, tối đa 8 phương án, mỗi phương án dưới 60 ký tự để "
     "hiển thị làm nút bấm. Không dùng khối này nếu không thực sự cần người dùng quyết định."
 )
+
+# Bridge-imposed constraint: every turn is a ONE-SHOT headless `claude -p` — the
+# process exits the instant the turn ends. So a long task run inline blocks until
+# the agent timeout (and gets killed), and a self-spawned background poll is
+# orphaned the moment the turn ends → the user never hears back. The fix is
+# bg_notify.py, which detaches from claude -p and pushes the result to Telegram
+# itself. This guidance lives here (not in a skill) so EVERY bridge agent gets it
+# regardless of which skill a build/deploy request happens to trigger.
+LONGTASK_SYS = (
+    "MÔI TRƯỜNG: bạn chạy headless one-shot — khi bạn KẾT THÚC LƯỢT, tiến trình "
+    "thoát NGAY. Do đó với BẤT KỲ lệnh chạy lâu (build/compile/test/deploy, "
+    "jenkins build --wait, mvn/gradle/npm build, hay gì >~1 phút): TUYỆT ĐỐI "
+    "KHÔNG chạy chặn trong lượt (sẽ bị giết vì timeout), và KHÔNG tự spawn "
+    "thread/tiến trình nền để 'hẹn báo sau' (sẽ mồ côi, không ai gửi tin). "
+    "Thay vào đó BẮT BUỘC bọc lệnh bằng bg_notify.py — nó tách rời khỏi claude -p "
+    "và tự gửi kết quả (✅/❌ + thời lượng) về Telegram khi xong. Mẫu "
+    "(chạy từ gốc repo, dùng đường dẫn đầy đủ để khỏi cd):\n"
+    "  python .claude/skills/dev-automation/tools/bg_notify.py --label \"Build etask dev\" "
+    "-- python .claude/skills/dev-automation/tools/jenkins.py build --project etask --env dev --wait\n"
+    "Sau khi nó in {\"detached\": true,…}, hãy trả lời ngắn gọn (vd 'Đã chạy nền, "
+    "sẽ nhắn khi xong') rồi KẾT THÚC LƯỢT — đừng chờ, đừng poll."
+)
+
+# One appended system prompt carries every bridge-specific behaviour.
+BRIDGE_SYS = CHOICE_SYS + "\n\n" + LONGTASK_SYS
 SESSIONS_FILE = os.path.join(cfg.temp_dir(), "..", "tg_sessions.json")
 _busy = set()           # chat ids with a running agent
 _busy_lock = threading.Lock()
@@ -151,11 +176,15 @@ def _claude_bin() -> str:
 # USERPROFILE on Windows) — the same thing the claude-work/personal wrappers do.
 def _base_home() -> str:
     """The real profile root on any OS, even if the bridge itself runs under a
-    per-account home (…/.claude-work) — strips a trailing .claude-* suffix so we
-    never nest …/.claude-work/.claude-work."""
+    per-account home (…/.claude-work) — strips EVERY trailing .claude-* suffix so
+    we never nest …/.claude-work/.claude-work, even when launched from a home that
+    is itself doubly nested (…/.claude-work/.claude-personal)."""
     h = os.path.normpath(os.path.expanduser("~"))
-    if os.path.basename(h).startswith(".claude-"):
-        return os.path.dirname(h)
+    while os.path.basename(h).startswith(".claude-"):
+        parent = os.path.dirname(h)
+        if not parent or parent == h:
+            break
+        h = parent
     return h
 
 
@@ -200,13 +229,18 @@ def _is_stale_session(text: str) -> bool:
 
 def _is_account_unavailable(text: str) -> bool:
     """True if the error looks like the account (not the request) is the problem:
-    usage/rate limit, auth/login, or no credit — i.e. a sibling account may work."""
+    usage/rate limit, auth/login, no credit, OR a server-side error (5xx /
+    overloaded) — i.e. a sibling account is worth a try."""
     t = (text or "").lower()
     needles = (
         "usage limit", "rate limit", "rate_limit", "too many requests",
         "credit balance", "insufficient", "quota",
         "please run /login", "/login", "authentication", "invalid api key",
         "unauthorized", "401", "403", "account",
+        # server-side errors: switching account is a cheap retry on another route
+        "500", "502", "503", "504", "529",
+        "internal server error", "server error", "overloaded",
+        "api error", "service unavailable", "bad gateway", "gateway timeout",
     )
     return any(n in t for n in needles)
 
@@ -217,7 +251,7 @@ def _invoke_claude(chat, text, settings_path, sid, home=None):
     it timed out (already reported to the user)."""
     argv = [_claude_bin(), "-p", text,
             "--output-format", "json",
-            "--append-system-prompt", CHOICE_SYS,
+            "--append-system-prompt", BRIDGE_SYS,
             "--settings", settings_path]
     if sid:
         argv += ["--resume", sid]

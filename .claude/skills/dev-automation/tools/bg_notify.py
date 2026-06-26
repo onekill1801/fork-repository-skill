@@ -31,7 +31,8 @@ Cờ
 --
   --label   nhãn hiển thị trong tin báo (mặc định "Tác vụ nền")
   --chat    chat id đích (mặc định lấy env CLAUDE_TG_CHAT_ID do bridge set sẵn)
-  --tail    số dòng cuối của output đính kèm trong tin báo (mặc định 40)
+  --tail    số dòng cuối output đính kèm tin báo (mặc định 0 = chỉ báo trạng thái +
+            thời lượng; full output luôn nằm trong .log)
   --detach / --no-detach
             ép bật/tắt chế độ tách rời. Mặc định: BẬT khi đang chạy dưới bridge
             (env CLAUDE_TG_BRIDGE=1), TẮT (chạy đồng bộ, để debug) khi chạy tay.
@@ -122,13 +123,17 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _tail(text: str, n: int) -> str:
+    if n <= 0:                       # -0 == 0 would slice the WHOLE list, so guard
+        return ""
     lines = (text or "").splitlines()
     return "\n".join(lines[-n:]) if len(lines) > n else (text or "")
 
 
 def _notify(chat, summary: dict, tail_text: str):
     """Push the result to Telegram if a chat + tg_api are available; otherwise
-    return False so the caller logs locally instead."""
+    return False so the caller logs locally instead. Kept deliberately short —
+    just status + duration. The log tail is only attached when --tail > 0 (off by
+    default); the full output is always in the .log file for inspection."""
     if not chat:
         return False
     try:
@@ -136,12 +141,11 @@ def _notify(chat, summary: dict, tail_text: str):
     except Exception:  # noqa: BLE001
         return False
     icon = "✅" if summary["ok"] else "❌"
-    status = "SUCCESS" if summary["ok"] else "FAILURE"
-    detail = f" · {html.escape(str(summary['detail']))}" if summary.get("detail") else ""
-    head = (f"{icon} <b>{html.escape(summary['label'])}</b> — <b>{status}</b>\n"
-            f"⏱ {summary['duration']} · exit {summary['returncode']}{detail}")
-    body = f"\n<pre>{html.escape(tail_text)}</pre>" if tail_text.strip() else ""
-    res = tg_api.send_message(chat, head + body)
+    status = "xong" if summary["ok"] else "THẤT BẠI"
+    msg = f"{icon} <b>{html.escape(summary['label'])}</b> — {status}\n⏱ {summary['duration']}"
+    if tail_text.strip():
+        msg += f"\n<pre>{html.escape(tail_text)}</pre>"
+    res = tg_api.send_message(chat, msg)
     return bool(res.get("ok"))
 
 
@@ -212,7 +216,9 @@ def main() -> int:
         description="Chạy tác vụ dài tách rời, xong tự báo kết quả về Telegram.")
     p.add_argument("--label", default="Tác vụ nền")
     p.add_argument("--chat", default=None)
-    p.add_argument("--tail", type=int, default=40)
+    p.add_argument("--tail", type=int, default=0,
+                   help="số dòng cuối output đính kèm tin báo (mặc định 0 = không đính, "
+                        "chỉ báo trạng thái + thời lượng; full output luôn có trong .log)")
     p.add_argument("--detach", action="store_true",
                    help="ép chạy tách rời (mặc định bật khi dưới bridge)")
     p.add_argument("--no-detach", dest="no_detach", action="store_true",

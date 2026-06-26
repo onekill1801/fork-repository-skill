@@ -36,6 +36,7 @@ source before first use to understand exact function signatures.
 | `tools/analytics.py` | Statistics, trends, overdue, finish rates + dashboard summaries / workload / drill-down |
 | `tools/governed_search.py` | Safe DSL query (`governed_search`) — whitelisted entity/field/op, read-only |
 | `tools/auth.py` | PAT management (list/revoke — create requires session JWT) |
+| `tools/etask_watch.py` | **Triage watcher** — poll my-tasks → phân tích (claude -p) → đề xuất assign/execute → duyệt Telegram → mở auto-dev hoặc báo người. Slash: `/etask-triage` |
 
 ## Workflows
 

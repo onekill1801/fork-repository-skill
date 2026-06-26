@@ -86,6 +86,7 @@ python send.py recall --group ID --inc MESSAGE_ID_INC [--yes]                # [
 
 python listen.py [--reply claude|notify|off]   # long-running: route incoming msgs; DM -> per-conversation worker terminal
 python reply_worker.py <group_id>              # (auto-launched by listen.py) per-conversation auto-reply worker
+python group_watch.py [--group ID] [--once "text"]   # long-running: watch ONE group -> review MR / build dev qua claude -p
 python auth.py refresh | token-status                                        # token mgmt (auto-refresh is automatic)
 
 python style_profile.py list | path <gid> | get <gid>                        # kho "giọng nhắn" theo từng hội thoại (gitignored)
@@ -131,6 +132,30 @@ to stdout and exit non-zero — read and handle, don't treat as a crash.
 Listener modes: `--reply claude` (default), `--reply notify` (print only),
 `--reply off` (log only). Reply model: env `FCHAT_REPLY_MODEL` (default `sonnet`).
 Heartbeat + auto-reconnect + token refresh are built in. Stop with Ctrl+C.
+
+## Group watcher → review MR / build dev (`group_watch.py`)
+
+Theo dõi **MỘT group** (vd "New Group") để lái việc review code & build lên dev:
+- Lắng nghe group qua socket realtime (như `listen.py` nhưng chỉ 1 group, không
+  auto-reply chuyện phiếm). Tin khớp **prefilter từ khoá** (`FCHAT_WATCH_KEYWORDS`,
+  mặc định mr/review/build/deploy/lên dev/…) mới được đưa cho agent.
+- Mỗi tin khớp → **báo nhận ngay vào group** ("đang review…" / "đang build…")
+  rồi spawn `claude -p` headless ở gốc repo (full agent: dev-automation, gitlab,
+  jenkins). Agent tự trả `SKIP` nếu tin thực ra không phải yêu cầu — khi đó tin
+  báo nhận được **thu hồi** để khỏi để lại rác.
+- **Duyệt build:** agent chạy với `CLAUDE_TG_BRIDGE=1` + hook `telegram_approve.py`,
+  nên build/[WRITE] hiện nút Duyệt/Từ chối trên Telegram. **Cần bridge daemon
+  (`telegram_bridge.py`) đang chạy** để giao nút bấm về (watcher KHÔNG tự poll
+  Telegram → không tranh getUpdates với bridge).
+- **Kết quả** báo về **cả Telegram lẫn chính group** (`send.py`, group non-secure);
+  review thì agent `gitlab_api.py mr-comment` thẳng lên MR.
+- Tài khoản claude lấy từ `CLAUDE_ACCOUNTS` (mặc định `work`).
+
+Config: `FCHAT_WATCH_GROUP` (id group), `FCHAT_WATCH_KEYWORDS`, `FCHAT_WATCH_TIMEOUT`.
+Test khô một câu: `python group_watch.py --once "review giúp MR 412"`.
+
+> ⚠️ Group đích phải **non-secure (plaintext)** thì mới đọc lệnh & post lại được.
+> Group secure/E2E → nội dung là ciphertext, hướng này không áp dụng.
 
 ## Style profiles (giọng nhắn theo từng người)
 
