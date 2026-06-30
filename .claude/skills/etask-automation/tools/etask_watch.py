@@ -232,7 +232,7 @@ def _launch_autodev(task, chat):
 
 def _notify(chat, text):
     try:
-        tg_api.send_message(chat, text)
+        tg_api.send_message(chat, text, bot=tg_api.approval_bot())
     except Exception as e:  # noqa: BLE001
         print(f"[{_now()}] [WARN] gửi Telegram lỗi: {e}", file=sys.stderr)
 
@@ -258,7 +258,8 @@ def _handle_task(task, chat, state):
                     f"<b>Đề xuất:</b> {html.escape(head)} (tier {html.escape(prop['tier'])})\n"
                     f"<b>Lý do:</b> {html.escape(prop['reason'])}\n\n"
                     f"<pre>{html.escape(summary[:1500])}</pre>")
-            resp = tg_api.send_message(chat, text, reply_markup=tg_api.approve_keyboard(req_id))
+            resp = tg_api.send_message(chat, text, reply_markup=tg_api.approve_keyboard(req_id),
+                                       bot=tg_api.approval_bot())
             if not resp.get("ok"):
                 print(f"[{_now()}] [WARN] không gửi được yêu cầu duyệt: {resp.get('description')}")
                 return
@@ -317,7 +318,7 @@ def poll_once(chat, state, act, max_per_cycle, baseline=False):
 
 
 def run(interval, act, max_per_cycle, triage_existing):
-    chat = (tg_api.allowed_chats() or [""])[0]
+    chat = (tg_api.allowed_chats(tg_api.approval_bot()) or [""])[0]
     if not chat:
         print("[ERROR] thiếu TELEGRAM_ALLOWED_CHATS (cần để gửi đề xuất + nhận duyệt).", file=sys.stderr)
         sys.exit(1)
@@ -356,7 +357,7 @@ if __name__ == "__main__":
     a = p.parse_args()
 
     if a.triage_id:
-        chat = (tg_api.allowed_chats() or [""])[0]
+        chat = (tg_api.allowed_chats(tg_api.approval_bot()) or [""])[0]
         if not chat:
             print("[ERROR] thiếu TELEGRAM_ALLOWED_CHATS.", file=sys.stderr); sys.exit(1)
         match = [t for t in _my_tasks() if t.get("id") == a.triage_id]
@@ -365,7 +366,7 @@ if __name__ == "__main__":
         _handle_task(task, chat, _load_state())
         sys.exit(0)
     if a.once:
-        chat = (tg_api.allowed_chats() or [""])[0]
+        chat = (tg_api.allowed_chats(tg_api.approval_bot()) or [""])[0]
         poll_once(chat, _load_state(), a.act, a.max_per_cycle)
         # chờ các thread xử lý xong (duyệt) trước khi thoát
         for th in [t for t in threading.enumerate() if t is not threading.current_thread() and t.daemon]:

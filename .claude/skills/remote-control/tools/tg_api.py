@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Telegram Bot API client (stdlib urllib only).
 
-Reads TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_CHATS from .env (via rc_config).
-Used by telegram_bridge.py (the daemon) and telegram_approve.py (the hook).
+Multi-bot: every function takes an optional `bot` name. `bot=None` (the default)
+reads the bare keys TELEGRAM_BOT_TOKEN / TELEGRAM_ALLOWED_CHATS — i.e. existing
+callers are unchanged. A named bot 'X' reads TELEGRAM_BOT_TOKEN_X /
+TELEGRAM_ALLOWED_CHATS_X, falling back to the default bot when those are unset
+(so splitting bots can be turned on incrementally without breaking anything).
 
-CLI (handy for testing the token/chat wiring):
-    python tg_api.py me                       # getMe -> bot identity
-    python tg_api.py updates                   # show chat_id of anyone who messaged the bot
-    python tg_api.py send <chat_id> "text"     # send a message
-    python tg_api.py test                      # ping every allowed chat
+Used by telegram_bridge.py (the daemon), telegram_approve.py (the hook), and the
+watchers/notifiers (which route to the ops bot via notify_bot()/approval_bot()).
+
+CLI (handy for testing the token/chat wiring); add a bot name as the last arg:
+    python tg_api.py me [bot]                  # getMe -> bot identity
+    python tg_api.py updates [bot]             # show chat_id of anyone who messaged the bot
+    python tg_api.py send <chat_id> "text" [bot]   # send a message
+    python tg_api.py test [bot]                # ping every allowed chat
 """
 
 import json
@@ -51,27 +57,55 @@ def _ssl_ctx():
     return ctx
 
 
-def _token() -> str:
-    tok = cfg.get("TELEGRAM_BOT_TOKEN")
+def _bot_suffix(bot) -> str:
+    """Map a logical bot name to its env-key suffix. Default bot (None/empty) ->
+    bare keys (TELEGRAM_BOT_TOKEN); named bot 'ops' -> TELEGRAM_BOT_TOKEN_OPS."""
+    return f"_{bot.upper()}" if bot else ""
+
+
+def _token(bot=None) -> str:
+    suf = _bot_suffix(bot)
+    tok = cfg.get(f"TELEGRAM_BOT_TOKEN{suf}")
+    if not tok and bot:               # named bot unconfigured -> fall back to default
+        tok = cfg.get("TELEGRAM_BOT_TOKEN")
     if not tok:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN missing in .env")
+        raise RuntimeError(f"TELEGRAM_BOT_TOKEN{suf} missing in .env")
     return tok
 
 
-def allowed_chats() -> list:
-    return cfg.get_list("TELEGRAM_ALLOWED_CHATS")
+def allowed_chats(bot=None) -> list:
+    suf = _bot_suffix(bot)
+    chats = cfg.get_list(f"TELEGRAM_ALLOWED_CHATS{suf}")
+    if not chats and bot:             # named bot unconfigured -> default allowlist
+        chats = cfg.get_list("TELEGRAM_ALLOWED_CHATS")
+    return chats
 
 
-def is_allowed(chat_id) -> bool:
-    allow = allowed_chats()
+def is_allowed(chat_id, bot=None) -> bool:
+    allow = allowed_chats(bot)
     if not allow:
         return False  # fail closed: no allowlist => nobody is authorized
     return str(chat_id) in allow
 
 
-def call(method: str, params: dict, timeout: int = 35) -> dict:
+def notify_bot():
+    """Logical bot for one-way notifications (watchers, bg_notify, digests).
+    TELEGRAM_NOTIFY_BOT wins, else the shared TELEGRAM_OPS_BOT, else None — and
+    None means the default bot, i.e. exactly the pre-split behaviour."""
+    return cfg.get("TELEGRAM_NOTIFY_BOT") or cfg.get("TELEGRAM_OPS_BOT") or None
+
+
+def approval_bot():
+    """Logical bot that shows approve/deny buttons (telegram_approve hook + the
+    watchers' approval cards). TELEGRAM_APPROVAL_BOT wins, else TELEGRAM_OPS_BOT,
+    else None (default bot). Its poller must run: telegram_bridge.py --bot <name>
+    --mode approvals-only (or the full bridge, if it IS the default bot)."""
+    return cfg.get("TELEGRAM_APPROVAL_BOT") or cfg.get("TELEGRAM_OPS_BOT") or None
+
+
+def call(method: str, params: dict, timeout: int = 35, bot=None) -> dict:
     """POST a Bot API method with a JSON body. Returns the parsed response."""
-    url = f"{API}/bot{_token()}/{method}"
+    url = f"{API}/bot{_token(bot)}/{method}"
     data = json.dumps(params).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"})
@@ -138,7 +172,8 @@ def _balance(parts: list) -> list:
 
 
 def send_message(chat_id, text: str, reply_markup=None,
-                 parse_mode: str = "HTML", disable_preview: bool = True) -> dict:
+                 parse_mode: str = "HTML", disable_preview: bool = True,
+                 bot=None) -> dict:
     """Send text (auto-chunked). Markup is only attached to the last chunk."""
     text = text if text.strip() else "(trống)"
     parts = list(_chunks(text)) or [""]
@@ -155,33 +190,33 @@ def send_message(chat_id, text: str, reply_markup=None,
             params["parse_mode"] = parse_mode
         if reply_markup is not None and i == len(parts) - 1:
             params["reply_markup"] = reply_markup
-        last = call("sendMessage", params)
+        last = call("sendMessage", params, bot=bot)
         # If HTML parse fails (unbalanced tags from agent output), retry as plain.
         if not last.get("ok") and parse_mode:
             params.pop("parse_mode", None)
-            last = call("sendMessage", params)
+            last = call("sendMessage", params, bot=bot)
     return last
 
 
-def get_updates(offset: int, timeout: int = 30) -> dict:
+def get_updates(offset: int, timeout: int = 30, bot=None) -> dict:
     return call("getUpdates", {
         "offset": offset,
         "timeout": timeout,
         "allowed_updates": ["message", "callback_query"],
-    }, timeout=timeout + 10)
+    }, timeout=timeout + 10, bot=bot)
 
 
-def answer_callback(callback_query_id: str, text: str = "") -> dict:
+def answer_callback(callback_query_id: str, text: str = "", bot=None) -> dict:
     return call("answerCallbackQuery",
-                {"callback_query_id": callback_query_id, "text": text})
+                {"callback_query_id": callback_query_id, "text": text}, bot=bot)
 
 
 def edit_message_text(chat_id, message_id, text: str,
-                      parse_mode: str = "HTML") -> dict:
+                      parse_mode: str = "HTML", bot=None) -> dict:
     return call("editMessageText", {
         "chat_id": chat_id, "message_id": message_id,
         "text": text[:MAX_LEN], "parse_mode": parse_mode,
-    })
+    }, bot=bot)
 
 
 def approve_keyboard(req_id: str) -> dict:
@@ -207,12 +242,15 @@ if __name__ == "__main__":
         sys.exit(1)
     cmd = sys.argv[1].lower()
     if cmd == "me":
-        print(json.dumps(call("getMe", {}), indent=2, ensure_ascii=False))
+        bot = sys.argv[2] if len(sys.argv) >= 3 else None
+        print(json.dumps(call("getMe", {}, bot=bot), indent=2, ensure_ascii=False))
     elif cmd == "send" and len(sys.argv) >= 4:
-        print(json.dumps(send_message(sys.argv[2], sys.argv[3]),
+        bot = sys.argv[4] if len(sys.argv) >= 5 else None
+        print(json.dumps(send_message(sys.argv[2], sys.argv[3], bot=bot),
                          indent=2, ensure_ascii=False))
     elif cmd == "updates":
-        resp = call("getUpdates", {"timeout": 0})
+        bot = sys.argv[2] if len(sys.argv) >= 3 else None
+        resp = call("getUpdates", {"timeout": 0}, bot=bot)
         seen = {}
         for upd in resp.get("result", []):
             msg = upd.get("message") or upd.get("callback_query", {}).get("message", {})
@@ -225,12 +263,14 @@ if __name__ == "__main__":
         for cid, name in seen.items():
             print(f"chat_id = {cid}   ({name})")
     elif cmd == "test":
-        chats = allowed_chats()
+        bot = sys.argv[2] if len(sys.argv) >= 3 else None
+        chats = allowed_chats(bot)
         if not chats:
-            print("TELEGRAM_ALLOWED_CHATS is empty — set it in .env first.")
+            key = f"TELEGRAM_ALLOWED_CHATS{_bot_suffix(bot)}"
+            print(f"{key} is empty — set it in .env first.")
             sys.exit(1)
         for c in chats:
-            r = send_message(c, "✅ <b>remote-control</b> bridge: kết nối OK.")
+            r = send_message(c, "✅ <b>remote-control</b> bridge: kết nối OK.", bot=bot)
             print(f"{c}: {'ok' if r.get('ok') else r.get('description')}")
     else:
         print(__doc__)

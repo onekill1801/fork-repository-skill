@@ -57,6 +57,7 @@ python gitlab_api.py mr-discussions <iid>
 python gitlab_api.py create-branch <name> [ref]    # [WRITE]
 python gitlab_api.py create-mr <source> "title" [target]   # [WRITE]
 python gitlab_api.py mr-comment <iid> "body"       # [WRITE]
+python gitlab_api.py merge-mr <iid> [--keep-source] [--squash]   # [WRITE] accept/merge MR
 python gitlab_api.py whoami                         # user GitLab hiện tại
 python gitlab_api.py my-review-mrs [reviewer|assignee|both]   # MR gắn tên tôi (toàn project)
 python mr_watch.py [--who ...] [--interval 300] [--once] [--no-spawn]   # poll MR gắn tên tôi → tự mở Claude review (hỏi trước khi post)
@@ -113,9 +114,11 @@ python dev-automation/tools/doctor.py        # (hoặc python3) — báo OS, Pyt
   tiếng Việt không crash trên console Windows cp1252. Phòng hờ có thể đặt env `PYTHONUTF8=1`.
 - **Đường dẫn**: dùng `os.path` (không hardcode `/` hay `\`); registry/`clone_dir` là dữ liệu máy-cụ-thể.
 - **Tool thuần stdlib (urllib/socket) → chạy mọi OS, chỉ cần token**: azure/gitlab/notifier, etask,
-  `probe_api/redis/kafka`, `jenkins`, `kafka_ui`, `flow_check`, `run_log`, `postman_gen`.
+  `probe_api/redis/kafka`, `probe_db` (mysql+postgres qua socket — `mysql_client.py`/`postgres_client.py`,
+  KHÔNG cần psql/mysql CLI), `jenkins`, `kafka_ui`, `flow_check`, `local_app` (start/wait-health/stop
+  app local cho e2e), `run_log`, `postman_gen`.
 - **Tool wrap CLI ngoài (cần cài trên máy)**: `test_runner` (mvn/gradle/npm/go/pytest theo project),
-  `probe_db` (psql/mysql), bước commit/push (git). `doctor.py` cho biết cái nào thiếu.
+  `local_app` chạy lệnh app (vd mvn spring-boot:run), bước commit/push (git). `doctor.py` cho biết cái nào thiếu.
 - `fork_terminal.py`: Windows (`cmd /k`), macOS (`osascript`/AppleScript), Linux (gnome-terminal/
   x-terminal-emulator/xterm — tự dò).
 - Môi trường phát triển chính: Windows + PowerShell; đã thiết kế để dev/CI trên macOS/Ubuntu chạy như nhau.

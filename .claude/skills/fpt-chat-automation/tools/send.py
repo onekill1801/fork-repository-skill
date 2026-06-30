@@ -58,7 +58,8 @@ def _resolve_group_type(group_id: str):
     return None, r
 
 
-def build_frame(group_id, content, sender_id, group_type, request_id=None) -> dict:
+def build_frame(group_id, content, sender_id, group_type, request_id=None,
+                metadata=None) -> dict:
     return {
         "type": "message",
         "data": {
@@ -67,13 +68,39 @@ def build_frame(group_id, content, sender_id, group_type, request_id=None) -> di
             "groupId": group_id,
             "groupType": group_type,
             "type": "TEXT",
-            "metadata": {},
+            "metadata": metadata or {},
             "senderId": sender_id,
         },
     }
 
 
-def send_text(group_id, content, group_type=None, sender_id=None, timeout=10) -> dict:
+def with_mentions_prefix(body, people):
+    """Prefix `body` with inline @mentions and return (content, metadata).
+
+    `people` = list of (display_name, user_id); entries with a falsy id/name are
+    skipped (text-only, no ping). Verified wire format (see SKILL.md): the literal
+    '@<displayName>' sits in `content`, and metadata.mentions carries
+    {userId, target, length, offset} where `offset` is the CODE-POINT index of '@'
+    in content and `length` = len('@' + displayName). Use 'EVERYONE' as the id to
+    tag @All.
+    """
+    tokens, mentions, offset = [], [], 0
+    for name, uid in people:
+        if not name or not uid:
+            continue
+        tok = f"@{name}"
+        mentions.append({"userId": uid, "target": name,
+                         "length": len(tok), "offset": offset})
+        tokens.append(tok)
+        offset += len(tok) + 1   # +1 for the space separating tokens / body
+    if not mentions:
+        return body, {}
+    content = " ".join(tokens) + (f" {body}" if body else "")
+    return content, {"mentions": mentions}
+
+
+def send_text(group_id, content, group_type=None, sender_id=None, timeout=10,
+              metadata=None) -> dict:
     sender_id = sender_id or _resolve_sender_id()
     if not group_type:
         group_type, _ = _resolve_group_type(group_id)
@@ -81,7 +108,7 @@ def send_text(group_id, content, group_type=None, sender_id=None, timeout=10) ->
         return {"error": True, "status": 0,
                 "message": "could not resolve groupType; pass --group-type explicitly"}
 
-    frame = build_frame(group_id, content, sender_id, group_type)
+    frame = build_frame(group_id, content, sender_id, group_type, metadata=metadata)
     req_id = frame["data"]["requestId"]
 
     ws = ws_client.WebSocket(

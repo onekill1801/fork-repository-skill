@@ -122,6 +122,48 @@ Mẫu: `auto-dev/scenarios/example-create-user.json` (API tạo user → DB → 
 - `save` ở cấp bước trích từ **kết quả bước** qua JSONPath (vd `{"save":{"n":"$.rows"}}`);
   `saveFrom` (chỉ api) trích từ **body JSON** của response.
 
+## Chạy app local rồi test e2e (mvn → gọi API → soi DB) — `local_app.py`
+
+`flow_check`/`probe_*` assert vào service **đang chạy**; chúng không tự khởi động app. `local_app.py`
+lấp chỗ đó: start app trên localhost (vd `mvn spring-boot:run`), chờ health endpoint UP, sau khi
+chạy scenario thì stop. Vòng đầy đủ: **build/run → gọi API → theo dõi DB → tear down**.
+
+```bash
+cd .claude/skills/dev-automation/tools
+# 1) start (detached, log vào temp/local_apps/<name>.log). --project lấy cwd = clone_dir.
+python local_app.py start --name etask --project etask \
+  --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
+# 2) chờ tới khi UP (JHipster: /management/health -> {"status":"UP"}); fail nhanh nếu app chết
+python local_app.py wait-health --name etask \
+  --url http://localhost:8271/management/health --timeout 300 --expect-text UP
+python local_app.py logs --name etask --tail 80      # xem log boot nếu lỗi
+# 3) chạy kịch bản e2e: gọi API tạo task -> SELECT bảng task xác nhận row
+API_BASE_URL=http://localhost:8271 API_AUTH_HEADER="X-eTask-PAT: <PAT>" \
+  python flow_check.py --file ../../auto-dev/scenarios/etask-create-task-e2e.json \
+  --project etask --env dev --var listId=<list_task_id_thật> --allow-prod
+# (--allow-prod CHỈ vì step có ghi; xem cảnh báo DB bên dưới)
+# 4) stop (kill cả cây tiến trình mvn -> java)
+python local_app.py stop --name etask
+```
+
+Mẫu: `auto-dev/scenarios/etask-create-task-e2e.json` (POST `/api/ai/execute` `create_task` → SELECT
+`task` → dọn `delete_task`). Sửa JSONPath `$.data.id` cho khớp response thật (chạy riêng step 1 xem JSON trước).
+
+> ⚠️ **DB & môi trường (BẮT BUỘC đọc).** Profile `dev` của etask trỏ datasource vào **DB dev DÙNG
+> CHUNG** (`10.14.121.8/idaas_etask`) và cần eureka/redis/ES/kafka/UAA reachable. Chạy e2e có GHI
+> theo cách này **làm bẩn data chung** và phụ thuộc cả hệ IDaaS. **Khuyến nghị**: trỏ app + probe
+> vào **DB cục bộ/cô lập** trước khi chạy ghi:
+> ```bash
+> # ví dụ ép datasource sang MySQL local (qua env Spring), rồi guard đúng DB trước khi test:
+> python local_app.py start --name etask --project etask --env "SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/etask_local?useSSL=false" --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
+> DB_HOST=localhost DB_NAME=etask_local python probe_db.py check-db --project etask --env dev --expect-db etask_local
+> ```
+> `check-db` đảm bảo probe (và mặc nhiên app) đang ở DB cô lập — sai DB trả `{"error":true}`, không
+> tính pass. Chỉ dùng `--allow-prod` khi thật sự cần ghi vào env protected (xác nhận thủ công).
+
+Tác vụ dài (mvn build/run, test suite) → bọc `bg_notify.py` nếu chạy dưới Telegram bridge (xem khối
+cảnh báo "Chờ-nền dưới Telegram bridge" ở đầu file).
+
 ## Tích hợp vào cổng Test của auto-dev
 
 Bước Test (xem `pipeline.md` §4) chạy theo thứ tự, dừng ở fail đầu tiên:

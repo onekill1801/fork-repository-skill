@@ -83,10 +83,12 @@ python todos.py delete --id TODO_ID [--yes]                                  # [
 
 python send.py text   --group ID --content "..." [--group-type TYPE] [--yes] # [WRITE] send message over WS; dry-run without --yes
 python send.py recall --group ID --inc MESSAGE_ID_INC [--yes]                # [WRITE] recall (delete for everyone); dry-run without --yes
+python notify_group.py --group ID --text "..." [--group-type T] [--user-id UID --user-name "Tên"]  # [WRITE] đăng tin (tự tag user) vào group; cho tool skill khác gọi (vd bg_notify báo build xong)
 
 python listen.py [--reply claude|notify|off]   # long-running: route incoming msgs; DM -> per-conversation worker terminal
 python reply_worker.py <group_id>              # (auto-launched by listen.py) per-conversation auto-reply worker
 python group_watch.py [--group ID] [--once "text"]   # long-running: watch ONE group -> review MR / build dev qua claude -p
+python task_digest.py [--interval 10] [--no-telegram] [--test "text"]   # long-running: nghe DM+nhóm -> trích việc cần làm -> digest.md + Telegram (KHÔNG trả lời)
 python auth.py refresh | token-status                                        # token mgmt (auto-refresh is automatic)
 
 python style_profile.py list | path <gid> | get <gid>                        # kho "giọng nhắn" theo từng hội thoại (gitignored)
@@ -146,16 +148,79 @@ Theo dõi **MỘT group** (vd "New Group") để lái việc review code & build
 - **Duyệt build:** agent chạy với `CLAUDE_TG_BRIDGE=1` + hook `telegram_approve.py`,
   nên build/[WRITE] hiện nút Duyệt/Từ chối trên Telegram. **Cần bridge daemon
   (`telegram_bridge.py`) đang chạy** để giao nút bấm về (watcher KHÔNG tự poll
-  Telegram → không tranh getUpdates với bridge).
-- **Kết quả** báo về **cả Telegram lẫn chính group** (`send.py`, group non-secure);
-  review thì agent `gitlab_api.py mr-comment` thẳng lên MR.
+  Telegram → không tranh getUpdates với bridge). Telegram giờ **chỉ** dùng cho nút
+  duyệt — KHÔNG còn echo kết quả review/build sang Telegram.
+- **Review → (chỉ APPROVE mới) duyệt merge → báo:** agent đăng nhận xét ĐẦY ĐỦ (theo
+  template `code_review_prompt.md`: logic/architecture/performance/security/testing…) lên
+  MR bằng `gitlab_api.py mr-comment`, dùng **badge emoji màu** (🟢/🟡/🔴 verdict, ✅/⚠️/❌
+  compliance — KHÔNG dùng shields.io vì GitLab nội bộ không ra internet). Agent ghi
+  `VERDICT: APPROVE|REQUEST_CHANGES|COMMENT` ở cuối câu trả lời. Tách bạch 2 việc:
+  - **Kết quả review → LUÔN báo về FPT Chat** (tag người yêu cầu), bất kể verdict.
+  - **Quyết định merge → việc RIÊNG trên Telegram.** Chỉ verdict **APPROVE** mới **hỏi
+    DUYỆT merge trên Telegram** (nút qua `approvals`, bridge daemon resolve). **Đồng ý**
+    → `gitlab_api.py merge-mr <iid>` rồi báo thêm 1 tin "đã merge" về FPT Chat. **Từ chối
+    / Hết hạn** → KHÔNG merge và **IM LẶNG phía FPT Chat** (kết quả review đã báo rồi).
+  Chờ duyệt chạy ở **thread nền** → worker xử lý tin kế tiếp ngay.
+- **Chạy song song:** pool `FCHAT_WATCH_WORKERS` worker (mặc định 3) rút từ cùng hàng đợi
+  → nhiều review/build cùng lúc, không sót, không trùng. ⚠️ Vì build cũng song song, hai
+  build cùng môi trường có thể đụng nhau (đặt `FCHAT_WATCH_WORKERS=1` để quay lại tuần tự).
+- **Tự ra lệnh từ chính tài khoản:** tin của chính chủ (senderId == me) chỉ được xử lý
+  khi mở đầu bằng **tiền tố `@bot `** (đè bằng `FCHAT_SELF_PREFIX`), vd `@bot review MR 412`
+  → bỏ tiền tố, bỏ qua prefilter từ khoá, xử lý như yêu cầu. Tin bot tự đăng (ack/kết quả)
+  KHÔNG có tiền tố → không tự kích hoạt → **chống loop vô hạn**.
+- **Build chạy nền** (qua `bg_notify.py`): khi build XONG, kết quả ✅/❌ + thời lượng
+  được đăng **về chính group FPT Chat và tag người yêu cầu** (không chỉ Telegram). Cơ
+  chế: `group_watch` truyền `FCHAT_NOTIFY_GROUP/_GROUP_TYPE/_USER_ID/_USER_NAME` qua env
+  cho agent → `bg_notify` đọc env, gọi `notify_group.py` đăng về FPT Chat. Build báo
+  **cả hai kênh**: FPT Chat (tag người yêu cầu) + Telegram (khép vòng sau khi bấm Duyệt).
+  Telegram-bridge thuần không set env → chỉ báo Telegram như cũ.
 - Tài khoản claude lấy từ `CLAUDE_ACCOUNTS` (mặc định `work`).
 
-Config: `FCHAT_WATCH_GROUP` (id group), `FCHAT_WATCH_KEYWORDS`, `FCHAT_WATCH_TIMEOUT`.
+Config: `FCHAT_WATCH_GROUP` (id group), `FCHAT_WATCH_KEYWORDS`, `FCHAT_WATCH_TIMEOUT`,
+`FCHAT_SELF_PREFIX` (mặc định `@bot`), `FCHAT_MERGE_APPROVE_TIMEOUT` (giây chờ duyệt merge,
+mặc định 1800), `FCHAT_WATCH_WORKERS` (số tác vụ chạy SONG SONG, mặc định 3).
 Test khô một câu: `python group_watch.py --once "review giúp MR 412"`.
 
 > ⚠️ Group đích phải **non-secure (plaintext)** thì mới đọc lệnh & post lại được.
 > Group secure/E2E → nội dung là ciphertext, hướng này không áp dụng.
+
+## Task digest (lắng nghe → tổng hợp việc cần làm, KHÔNG trả lời) — `task_digest.py`
+
+Một bridge **chỉ đọc** để chưng cất công việc của chủ tài khoản từ chat — không gửi
+lại bất kỳ tin nào:
+- Giữ kết nối WS realtime (cùng transport `listen.py`) và **buffer mọi tin TEXT đọc
+  được** (DM + tất cả nhóm); bỏ tin của chính mình, tin non-TEXT, và tin **E2E mã hoá**
+  (ciphertext → không đọc được, chỉ đếm rồi bỏ).
+- Mỗi `--interval` phút (mặc định 10): gửi lô tin cho `claude -p` để **rút action item
+  giao cho bạn** → ghi mục có ngày giờ vào `temp/fchat_tasks/digest.md` (danh sách việc
+  dạng checkbox, có người nhờ + deadline + độ ưu tiên) và **đẩy tóm tắt việc MỚI sang
+  Telegram** (bot của skill remote-control).
+- Log thô mọi tin đọc được vào `temp/fchat_tasks/inbox.jsonl` (bền qua restart).
+
+> ⚠️ **Giới hạn cứng:** chỉ trích được việc từ hội thoại **non-secure (plaintext)**.
+> Nhóm/DM secure → nội dung mã hoá E2E, bridge chỉ thấy metadata, **không đọc được nội dung**.
+
+Config thêm: `FCHAT_DIGEST_MODEL` (model cho `claude -p`, mặc định `sonnet`).
+**Account:** spawn `claude -p` dưới account chính của `CLAUDE_ACCOUNTS` (mặc định `work`)
+bằng cách set `HOME`/`USERPROFILE` về home của account đó — tránh kế thừa creds sai gây
+401; tự fallback sang account kế tiếp khi gặp 401/quota (dùng lại logic `telegram_bridge`).
+Telegram dùng `TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALLOWED_CHATS` (của remote-control);
+thiếu thì tự bỏ push, vẫn ghi `digest.md`. Test khô khâu trích:
+`python task_digest.py --test "anh review giúp MR 412 trước trưa nay"`.
+
+## Mention / tag người trong tin (`@`)
+
+**[Đã xác minh từ tin thật]** FPT Chat tag người bằng HAI phần song song:
+- `content`: chèn chữ `@<DisplayName>` ngay trong nội dung.
+- `metadata.mentions`: mảng `{userId, target, length, offset}` —
+  `userId` = id người được tag (hoặc `"EVERYONE"` cho @All); `target` = tên hiển thị
+  (không có `@`); `offset` = vị trí ký tự `@` trong content (đếm theo **code point**);
+  `length` = độ dài chuỗi `@`+tên. Thông báo (ping) đến từ `userId`.
+
+`send.py` hỗ trợ qua `send_text(..., metadata=...)` và helper
+`send.with_mentions_prefix(body, [(display_name, user_id), ...])` → trả `(content, metadata)`
+đã chèn tiền tố `@Tên` và tính sẵn offset/length đúng. `group_watch.py` dùng helper này để
+**tag người tạo yêu cầu** khi đăng kết quả về group.
 
 ## Style profiles (giọng nhắn theo từng người)
 
@@ -192,6 +257,7 @@ tự nạp profile của hội thoại đó vào prompt (ưu tiên hơn lịch s
 | "send a message to <group>", "gửi tin nhắn" | `send.py text` (confirm → `--yes`; non-secure only) |
 | "recall / thu hồi tin nhắn" | `send.py recall --group --inc` (confirm → `--yes`) |
 | "read messages in <group>", "đọc tin nhắn" | `messages.py list` |
+| "lắng nghe chat → tổng hợp việc của tôi", "bridge tổng hợp công việc", "không cần trả lời" | `task_digest.py` |
 | "học/lưu giọng nhắn với <người>", "phong cách nhắn tin" | `style_profile.py gather` → phân tích → `save` |
 | "soạn/trả lời theo giọng của tôi" | `reply_worker` tự nạp `style_profile.py get <gid>` |
 | "files/links/media in <group>" | `messages.py media --type ...` |

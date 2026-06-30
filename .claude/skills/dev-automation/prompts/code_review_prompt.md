@@ -3,6 +3,13 @@
 Use this template to structure code review comments posted on GitLab merge requests.
 Fill in each section based on the review findings.
 
+> **Colored badges (use emoji — they always render on GitLab, including internal
+> instances with no internet).** Do NOT use shields.io image badges: an offline
+> GitLab shows them broken.
+> - Verdict: 🟢 `APPROVE` · 🟡 `COMMENT` · 🔴 `REQUEST_CHANGES`
+> - Issue severity: 🔴 Critical · 🟡 Major · 🟢 Minor
+> - Compliance / checks: ✅ pass · ⚠️ warning · ❌ fail
+
 ---
 
 ## Code Review Summary
@@ -10,7 +17,7 @@ Fill in each section based on the review findings.
 **MR:** !<mr_iid> - <title>
 **Reviewer:** AI Agent
 **Date:** <date>
-**Overall Verdict:** <APPROVE | REQUEST_CHANGES | COMMENT>
+**Overall Verdict:** <🟢 APPROVE | 🔴 REQUEST_CHANGES | 🟡 COMMENT>
 
 ---
 
@@ -20,7 +27,7 @@ Fill in each section based on the review findings.
 
 ---
 
-### Critical Issues (must fix before merge)
+### 🔴 Critical Issues (must fix before merge)
 
 <If none, write "No critical issues found.">
 
@@ -33,7 +40,7 @@ Fill in each section based on the review findings.
 
 ---
 
-### Major Suggestions (strongly recommended)
+### 🟡 Major Suggestions (strongly recommended)
 
 <If none, write "No major suggestions.">
 
@@ -43,7 +50,7 @@ Fill in each section based on the review findings.
 
 ---
 
-### Minor / Nitpicks
+### 🟢 Minor / Nitpicks
 
 <If none, write "Code looks clean.">
 
@@ -55,12 +62,12 @@ Fill in each section based on the review findings.
 
 | Category | Status | Notes |
 |----------|--------|-------|
-| Correctness | pass/fail | |
-| Code Quality | pass/fail | |
-| Architecture | pass/fail | |
-| Security | pass/fail | |
-| Performance | pass/fail | |
-| Testing | pass/fail | |
+| Correctness | ✅ / ⚠️ / ❌ | |
+| Code Quality | ✅ / ⚠️ / ❌ | |
+| Architecture | ✅ / ⚠️ / ❌ | |
+| Security | ✅ / ⚠️ / ❌ | |
+| Performance | ✅ / ⚠️ / ❌ | |
+| Testing | ✅ / ⚠️ / ❌ | |
 
 ---
 

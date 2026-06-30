@@ -39,6 +39,41 @@ import tg_api  # noqa: E402
 HOOK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "telegram_approve.py")
 
+# ── which bot this daemon drives ──────────────────────────────────
+# A daemon process drives exactly ONE bot (Telegram allows one getUpdates poller
+# per token). _BOT / _MODE are set once in serve() before any thread starts, so
+# the threads only ever READ them — no locking needed. Every tg_api call goes
+# through these thin wrappers so the bot binding is applied in one place.
+#   _MODE "full"           : receive messages -> run claude -p agents (+ choices)
+#   _MODE "approvals-only" : light poller — only handle appr: button callbacks
+#                            (for the ops bot: notify + approve, no agent)
+_BOT = None
+_MODE = "full"
+
+
+def _send(chat, text, **kw):
+    return tg_api.send_message(chat, text, bot=_BOT, **kw)
+
+
+def _answer(cb_id, text=""):
+    return tg_api.answer_callback(cb_id, text, bot=_BOT)
+
+
+def _edit(chat, message_id, text):
+    return tg_api.edit_message_text(chat, message_id, text, bot=_BOT)
+
+
+def _allowed_chats():
+    return tg_api.allowed_chats(_BOT)
+
+
+def _is_allowed(chat):
+    return tg_api.is_allowed(chat, _BOT)
+
+
+def _get_updates(offset, timeout=30):
+    return tg_api.get_updates(offset, timeout, bot=_BOT)
+
 # Taught to every bridge-spawned agent so plan/decision prompts arrive as
 # tappable Telegram buttons instead of unselectable prose. The bridge detects
 # this block in the reply (choices.parse) and renders an inline keyboard.
@@ -271,11 +306,11 @@ def _invoke_claude(chat, text, settings_path, sid, home=None):
             text=True, encoding="utf-8", errors="replace",
             timeout=int(cfg.get("TELEGRAM_AGENT_TIMEOUT", "1800") or "1800"))
     except FileNotFoundError:
-        tg_api.send_message(chat, "❌ Không tìm thấy <code>claude</code> trên PATH "
+        _send(chat, "❌ Không tìm thấy <code>claude</code> trên PATH "
                             "(đặt CLAUDE_BIN trong .env nếu cần).")
         return None
     except subprocess.TimeoutExpired:
-        tg_api.send_message(chat, "⏱️ Agent chạy quá lâu, đã hủy.")
+        _send(chat, "⏱️ Agent chạy quá lâu, đã hủy.")
         return None
 
     out = proc.stdout.strip()
@@ -297,7 +332,7 @@ def _run_agent(chat, text, settings_path):
     """Run one turn: try the chat's current account first (default = primary),
     falling back to the next account if this one is unavailable (limit/auth).
     A stale session on an account is dropped and retried fresh on that account."""
-    tg_api.send_message(chat, "⏳ <i>Agent đang xử lý…</i>")
+    _send(chat, "⏳ <i>Agent đang xử lý…</i>")
     try:
         rec = _session_rec(chat)
         cur_account, cur_sid = rec.get("account"), rec.get("sid")
@@ -312,7 +347,7 @@ def _run_agent(chat, text, settings_path):
 
             # session vanished on this account -> retry fresh on the SAME account
             if is_error and sid and _is_stale_session(result_text):
-                tg_api.send_message(chat, "♻️ Phiên cũ không còn, bắt đầu phiên mới…")
+                _send(chat, "♻️ Phiên cũ không còn, bắt đầu phiên mới…")
                 res = _invoke_claude(chat, text, settings_path, None, home)
                 if res is None:
                     return
@@ -322,7 +357,7 @@ def _run_agent(chat, text, settings_path):
             if is_error and _is_account_unavailable(result_text) \
                     and idx < len(accounts) - 1:
                 nxt = accounts[idx + 1][0]
-                tg_api.send_message(
+                _send(
                     chat, f"⚠️ Tài khoản <b>{label}</b> không khả dụng "
                     f"(giới hạn/đăng nhập). Chuyển sang <b>{nxt}</b>…")
                 cur_account, cur_sid = None, None
@@ -335,7 +370,7 @@ def _run_agent(chat, text, settings_path):
                 _save_session(chat, new_sid, label)
             _deliver(chat, result_text or "(agent không trả về nội dung)")
             if new_sid and _session_rec(chat).get("turns") == LONG_SESSION_TURNS:
-                tg_api.send_message(chat, "ℹ️ Phiên đã khá dài (đủ "
+                _send(chat, "ℹ️ Phiên đã khá dài (đủ "
                                     f"{LONG_SESSION_TURNS} lượt). Gõ <b>/new</b> nếu "
                                     "muốn bắt đầu ngữ cảnh sạch.")
             return
@@ -354,16 +389,16 @@ def _deliver(chat, result_text):
     button label."""
     parsed = choices.parse(result_text)
     if not parsed:
-        tg_api.send_message(chat, md2tg.to_html(result_text))
+        _send(chat, md2tg.to_html(result_text))
         return
     preamble, question, options = parsed
     token = choices.create(chat, question, options)
     if preamble:
-        tg_api.send_message(chat, md2tg.to_html(preamble))  # full plan, chunked if long
+        _send(chat, md2tg.to_html(preamble))  # full plan, chunked if long
     lines = [f"❓ <b>{md2tg._inline(question)}</b>", ""]
     lines += [f"<b>{i + 1}.</b> {md2tg._inline(opt)}" for i, opt in enumerate(options)]
     lines += ["", "<i>Bấm nút bên dưới để chọn.</i>"]
-    tg_api.send_message(chat, "\n".join(lines),
+    _send(chat, "\n".join(lines),
                         reply_markup=tg_api.choices_keyboard(token, options))
 
 
@@ -371,7 +406,7 @@ def _deliver(chat, result_text):
 def _handle_command(chat, text) -> bool:
     cmd = text.strip().split()[0].lower()
     if cmd in ("/start", "/help"):
-        tg_api.send_message(chat,
+        _send(chat,
             "🤖 <b>Remote-control bridge</b>\n"
             "Nhắn yêu cầu thường (vd <i>“review MR 123”</i>, <i>“task của tôi”</i>, "
             "<i>“ssh may-build chạy df -h”</i>) → agent xử lý.\n"
@@ -383,24 +418,24 @@ def _handle_command(chat, text) -> bool:
             "• /whoami — chat_id của bạn")
         return True
     if cmd == "/whoami":
-        tg_api.send_message(chat, f"chat_id của bạn: <code>{chat}</code>")
+        _send(chat, f"chat_id của bạn: <code>{chat}</code>")
         return True
     if cmd in ("/new", "/reset", "/clear"):
         _save_session(chat, None)
-        tg_api.send_message(chat, "🆕 <b>Đã tạo phiên mới.</b> Ngữ cảnh cũ đã xóa — "
+        _send(chat, "🆕 <b>Đã tạo phiên mới.</b> Ngữ cảnh cũ đã xóa — "
                             "tin nhắn tới sẽ bắt đầu sạch từ đầu.")
         return True
     if cmd == "/session":
-        tg_api.send_message(chat, _session_status(chat))
+        _send(chat, _session_status(chat))
         return True
     if cmd == "/hosts":
         hosts = ssh_exec.load_hosts()
         if not hosts:
-            tg_api.send_message(chat, "Chưa có host nào trong <code>work/hosts.json</code>.")
+            _send(chat, "Chưa có host nào trong <code>work/hosts.json</code>.")
         else:
             lines = [f"• <code>{a}</code> → {h.get('user','')}@{h.get('host')}"
                      for a, h in hosts.items()]
-            tg_api.send_message(chat, "<b>SSH hosts:</b>\n" + "\n".join(lines))
+            _send(chat, "<b>SSH hosts:</b>\n" + "\n".join(lines))
         return True
     return False
 
@@ -409,11 +444,11 @@ def _handle_callback(cbq, settings_path):
     data = cbq.get("data", "")
     cb_id = cbq.get("id")
     if data.startswith("appr:"):
-        _handle_approval_cb(cbq, data, cb_id)
-    elif data.startswith("choice:"):
+        _handle_approval_cb(cbq, data, cb_id)          # works in both modes
+    elif data.startswith("choice:") and _MODE == "full":
         _handle_choice_cb(cbq, data, cb_id, settings_path)
     else:
-        tg_api.answer_callback(cb_id)
+        _answer(cb_id)
 
 
 def _handle_approval_cb(cbq, data, cb_id):
@@ -423,9 +458,9 @@ def _handle_approval_cb(cbq, data, cb_id):
     msg = cbq.get("message", {})
     label = "✅ ĐÃ DUYỆT" if approved else "❌ ĐÃ TỪ CHỐI"
     if rec:
-        tg_api.edit_message_text(msg.get("chat", {}).get("id"), msg.get("message_id"),
+        _edit(msg.get("chat", {}).get("id"), msg.get("message_id"),
                                  f"{label}\n<code>{rec.get('summary','')}</code>")
-    tg_api.answer_callback(cb_id, label)
+    _answer(cb_id, label)
 
 
 def _handle_choice_cb(cbq, data, cb_id, settings_path):
@@ -434,15 +469,15 @@ def _handle_choice_cb(cbq, data, cb_id, settings_path):
     chosen = choices.resolve(token, int(idx))
     msg = cbq.get("message", {})
     if not chosen:
-        tg_api.answer_callback(cb_id, "Lựa chọn đã hết hạn.")
+        _answer(cb_id, "Lựa chọn đã hết hạn.")
         return
     rec = choices.get(token)
     chat = rec.get("chat") or msg.get("chat", {}).get("id")
-    tg_api.edit_message_text(
+    _edit(
         msg.get("chat", {}).get("id"), msg.get("message_id"),
         f"❓ <b>{html.escape(rec.get('question', ''))}</b>\n"
         f"➡️ <b>Đã chọn:</b> <code>{html.escape(chosen)}</code>")
-    tg_api.answer_callback(cb_id, f"Đã chọn: {chosen[:60]}")
+    _answer(cb_id, f"Đã chọn: {chosen[:60]}")
     # Resume the agent with the picked option as the next turn.
     _start_turn(chat, f"Tôi chọn phương án: {chosen}", settings_path)
 
@@ -452,9 +487,18 @@ def _handle_message(msg, settings_path):
     text = msg.get("text", "")
     if not text:
         return
-    if not tg_api.is_allowed(chat):
-        tg_api.send_message(chat, "⛔ Chat chưa được cấp quyền. "
+    if not _is_allowed(chat):
+        _send(chat, "⛔ Chat chưa được cấp quyền. "
                             f"chat_id: <code>{chat}</code> — thêm vào TELEGRAM_ALLOWED_CHATS.")
+        return
+    if _MODE == "approvals-only":
+        # Ops bot = notify + approve only, never runs an agent. Still answer the
+        # identity commands so the user can grab the chat_id for the allowlist.
+        if text.strip().split()[0].lower() in ("/whoami", "/start", "/help"):
+            _send(chat, "🛠️ <b>Kênh OPS</b> — theo dõi &amp; duyệt.\n"
+                  f"chat_id: <code>{chat}</code>\n"
+                  "<i>Kênh này chỉ nhận thông báo và nút Duyệt. Gửi yêu cầu code "
+                  "ở bot CODE.</i>")
         return
     if text.startswith("/") and _handle_command(chat, text):
         return
@@ -466,7 +510,7 @@ def _start_turn(chat, text, settings_path) -> bool:
     False (and notifies) if the chat is busy."""
     with _busy_lock:
         if str(chat) in _busy:
-            tg_api.send_message(chat, "⏳ Đang chạy một yêu cầu, đợi xong rồi nhắn tiếp nhé.")
+            _send(chat, "⏳ Đang chạy một yêu cầu, đợi xong rồi nhắn tiếp nhé.")
             return False
         _busy.add(str(chat))
     threading.Thread(target=_run_agent, args=(chat, text, settings_path),
@@ -474,19 +518,29 @@ def _start_turn(chat, text, settings_path) -> bool:
     return True
 
 
-def serve():
-    missing = [k for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_CHATS") if not cfg.get(k)]
-    if missing:
-        print(f"Thiếu config: {', '.join(missing)} (đặt trong .env)")
+def serve(bot=None, mode="full"):
+    global _BOT, _MODE
+    _BOT, _MODE = bot, mode
+    # Presence check on THIS bot's keys; tg_api falls back to the default bot's
+    # token/allowlist when a named bot is unconfigured, so an unset ops bot still
+    # boots (it just shares the default bot — harmless until you give it a token).
+    try:
+        tg_api._token(bot)
+    except RuntimeError as e:
+        print(f"Thiếu config: {e}")
         sys.exit(1)
-    settings_path = _write_bridge_settings()
-    print(f"Bridge khởi động. Hub repo: {cfg.repo_root()}")
-    print(f"Allowed chats: {tg_api.allowed_chats()}")
+    if not _allowed_chats():
+        print(f"Thiếu config: TELEGRAM_ALLOWED_CHATS{tg_api._bot_suffix(bot)} (đặt trong .env)")
+        sys.exit(1)
+    # approvals-only never spawns an agent -> the hook settings file is moot.
+    settings_path = _write_bridge_settings() if mode == "full" else None
+    print(f"Bridge khởi động [bot={bot or 'default'}, mode={mode}]. Hub repo: {cfg.repo_root()}")
+    print(f"Allowed chats: {_allowed_chats()}")
     print("Ctrl+C để dừng.")
     offset = 0
     while True:
         try:
-            resp = tg_api.get_updates(offset, timeout=30)
+            resp = _get_updates(offset, timeout=30)
             if not resp.get("ok"):
                 time.sleep(3)
                 continue
@@ -505,9 +559,19 @@ def serve():
 
 
 if __name__ == "__main__":
-    if "--test" in sys.argv:
-        for c in tg_api.allowed_chats():
-            r = tg_api.send_message(c, "✅ Bridge test OK.")
+    import argparse
+    p = argparse.ArgumentParser(prog="telegram_bridge.py")
+    p.add_argument("--bot", default=None,
+                   help="tên bot (rỗng = bot mặc định TELEGRAM_BOT_TOKEN; vd 'ops')")
+    p.add_argument("--mode", choices=["full", "approvals-only"], default="full",
+                   help="full = nhận tin -> chạy agent (bot CODE); "
+                        "approvals-only = poller nhẹ chỉ bắt nút Duyệt (bot OPS)")
+    p.add_argument("--test", action="store_true", help="ping các allowed chat rồi thoát")
+    a = p.parse_args()
+    if a.test:
+        _BOT = a.bot
+        for c in _allowed_chats():
+            r = _send(c, "✅ Bridge test OK.")
             print(f"{c}: {'ok' if r.get('ok') else r.get('description')}")
         sys.exit(0)
-    serve()
+    serve(bot=a.bot, mode=a.mode)

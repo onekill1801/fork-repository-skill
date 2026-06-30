@@ -10,6 +10,7 @@ Usage:
     python gitlab_api.py create-mr <source_branch> <title> [target_branch]
     python gitlab_api.py mr-changes <mr_iid>
     python gitlab_api.py mr-comment <mr_iid> "Comment body"
+    python gitlab_api.py merge-mr <mr_iid> [--keep-source] [--squash]   # [WRITE] accept/merge MR
     python gitlab_api.py list-mrs [state]
     python gitlab_api.py mr-discussions <mr_iid>
     python gitlab_api.py mr-detail <mr_iid>
@@ -127,6 +128,18 @@ def get_merge_request_changes(mr_iid: int) -> dict:
             for c in changes
         ],
     }
+
+
+def accept_merge_request(mr_iid: int, remove_source: bool = True,
+                         squash: bool = False) -> dict:
+    """[WRITE] Accept (merge) a merge request. Returns the MR object — `state`
+    becomes 'merged' on success, else GitLab returns an error (e.g. 405 if not
+    mergeable: conflicts, pipeline not passed, needs approval)."""
+    url = _api(f"/merge_requests/{mr_iid}/merge")
+    data = {"should_remove_source_branch": remove_source}
+    if squash:
+        data["squash"] = True
+    return _request(url, method="PUT", data=data)
 
 
 def add_mr_comment(mr_iid: int, body: str) -> dict:
@@ -302,6 +315,11 @@ if __name__ == "__main__":
 
     elif cmd == "mr-comment" and len(sys.argv) >= 4:
         _print_json(add_mr_comment(int(sys.argv[2]), sys.argv[3]))
+
+    elif cmd == "merge-mr" and len(sys.argv) >= 3:
+        remove_source = "--keep-source" not in sys.argv
+        squash = "--squash" in sys.argv
+        _print_json(accept_merge_request(int(sys.argv[2]), remove_source, squash))
 
     elif cmd == "list-mrs":
         state = sys.argv[2] if len(sys.argv) >= 3 else "opened"

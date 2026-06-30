@@ -129,6 +129,39 @@ def _tail(text: str, n: int) -> str:
     return "\n".join(lines[-n:]) if len(lines) > n else (text or "")
 
 
+def _notify_fchat(summary: dict, tail_text: str):
+    """Đăng kết quả về FPT Chat group (tag người yêu cầu) nếu env FCHAT_NOTIFY_GROUP
+    được set — group_watch.py set sẵn khi giao việc cho agent. Gọi notify_group.py
+    của skill fpt-chat như SUBPROCESS để tránh đụng module config.py trùng tên.
+    Trả True nếu đã đăng, False nếu không cấu hình / lỗi."""
+    gid = os.environ.get("FCHAT_NOTIFY_GROUP")
+    if not gid:
+        return False
+    icon = "✅" if summary["ok"] else "❌"
+    status = "xong" if summary["ok"] else "THẤT BẠI"
+    text = f"{icon} {summary['label']} — {status} (⏱ {summary['duration']})"
+    if tail_text.strip():
+        text += "\n" + tail_text
+    script = os.path.join(REPO_ROOT, ".claude", "skills", "fpt-chat-automation",
+                          "tools", "notify_group.py")
+    if not os.path.isfile(script):
+        return False
+    argv = [sys.executable, script, "--group", gid, "--text", text]
+    gtype = os.environ.get("FCHAT_NOTIFY_GROUP_TYPE")
+    uid = os.environ.get("FCHAT_NOTIFY_USER_ID")
+    uname = os.environ.get("FCHAT_NOTIFY_USER_NAME")
+    if gtype:
+        argv += ["--group-type", gtype]
+    if uid and uname:
+        argv += ["--user-id", uid, "--user-name", uname]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _notify(chat, summary: dict, tail_text: str):
     """Push the result to Telegram if a chat + tg_api are available; otherwise
     return False so the caller logs locally instead. Kept deliberately short —
@@ -145,7 +178,7 @@ def _notify(chat, summary: dict, tail_text: str):
     msg = f"{icon} <b>{html.escape(summary['label'])}</b> — {status}\n⏱ {summary['duration']}"
     if tail_text.strip():
         msg += f"\n<pre>{html.escape(tail_text)}</pre>"
-    res = tg_api.send_message(chat, msg)
+    res = tg_api.send_message(chat, msg, bot=tg_api.notify_bot())
     return bool(res.get("ok"))
 
 
@@ -179,7 +212,12 @@ def run_worker(cmd: list, label: str, chat, tail_n: int) -> dict:
     print(combined)
     sys.stdout.flush()
 
-    summary["notified"] = _notify(chat, summary, _tail(combined, tail_n))
+    # Báo CẢ HAI kênh: FPT Chat (nếu có context group_watch → tag người yêu cầu) VÀ
+    # Telegram (nếu có chat → khép vòng sau khi bấm Duyệt). Telegram-bridge thuần
+    # không set FCHAT env → _notify_fchat trả False, chỉ báo Telegram như cũ.
+    tail_text = _tail(combined, tail_n)
+    summary["notified_fchat"] = _notify_fchat(summary, tail_text)
+    summary["notified"] = _notify(chat, summary, tail_text)
     return summary
 
 

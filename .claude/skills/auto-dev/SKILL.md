@@ -61,6 +61,7 @@ source before first use.
 | `azure_devops.py` / `search.py` (etask) | Intake: read the task + acceptance criteria |
 | `test_runner.py` | **Test gates** — `run --project <p> --kind test\|lint\|build` → JSON `passed` |
 | `probe_*.py` (`probe_db.py check-db` guards the isolated DB) `flow_check.py` `jenkins.py` | **Integration / e2e / CI** — see `cookbook/stack-verify.md` |
+| `local_app.py` | **Local app-under-test lifecycle** — start (mvn/jar) → wait-health → stop, for localhost e2e (run app → call API → watch DB) |
 | `run_log.py` | **Evidence-gated state machine** — `record-gate` / `advance` / AC ledger; resume + audit in `temp/runs/<run_id>.json` |
 | `gitlab_api.py` | branch + MR |
 | `notifier.py` | progress notifications (checkpoint `before_notify` guards these) |

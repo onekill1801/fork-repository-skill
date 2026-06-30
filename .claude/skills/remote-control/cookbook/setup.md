@@ -35,6 +35,53 @@ python telegram_bridge.py
 ## 5. Dừng
 Ctrl+C trong cửa sổ daemon.
 
+## (Tùy chọn) Tách 2 bot: CODE + OPS
+
+Mặc định mọi thứ (điều khiển code, thông báo, duyệt) chạy trên **một** bot. Có thể
+tách thành 2 bot cho gọn kênh:
+
+| Bot | Vai trò | Poll Telegram? |
+|---|---|---|
+| 🤖 **CODE** = `TELEGRAM_BOT_TOKEN` (bot mặc định) | nhắn → `claude -p` full agent | poller đầy đủ (`--mode full`) |
+| 🛠️ **OPS** = `TELEGRAM_BOT_TOKEN_OPS` | monitor + thông báo + **nút Duyệt** | poller nhẹ (`--mode approvals-only`) |
+
+**Vì sao 2 token:** Telegram chỉ cho **một** tiến trình `getUpdates` mỗi token (cái thứ
+hai bị `409 Conflict`). Bot nào cần *nhận* (lệnh hoặc nút bấm) phải có poller riêng →
+token riêng. Gửi thông báo một chiều thì KHÔNG cần token riêng (nhiều tiến trình gửi
+chung một token thoải mái) — bot OPS gom luôn cả notify lẫn duyệt.
+
+1. Tạo bot thứ 2 ở @BotFather (như mục 1), điền `.env`:
+   ```
+   TELEGRAM_OPS_BOT=ops                 # công tắc bật tách
+   TELEGRAM_BOT_TOKEN_OPS=<token bot ops>
+   TELEGRAM_ALLOWED_CHATS_OPS=<chat_id kênh ops>
+   ```
+   > `TELEGRAM_OPS_BOT` rỗng = tắt tách (mọi thứ về bot mặc định, đúng hành vi cũ).
+   > Lấy `chat_id` kênh ops: nhắn cho bot ops rồi `python tg_api.py updates ops`,
+   > hoặc khởi động poller ops và gửi `/whoami`.
+2. Test riêng từng bot:
+   ```
+   python tg_api.py me ops      # xác nhận token bot ops
+   python tg_api.py test ops    # ping chat ops
+   ```
+3. Chạy **2** daemon (mỗi bot một tiến trình):
+   ```
+   python telegram_bridge.py                                  # 🤖 CODE (full)
+   python telegram_bridge.py --bot ops --mode approvals-only  # 🛠️ OPS (poller nhẹ)
+   ```
+
+**Khớp nối duyệt:** hook `telegram_approve.py` chạy *trong* agent của bot CODE nhưng
+gửi thẻ duyệt qua token OPS và chờ **file quyết định** (`approvals.py`). Poller OPS
+bắt nút → ghi file → hook đọc file. Vì vậy tách bot vẫn thông.
+
+**Lưu ý chat group:** `chat_id` của *chat riêng tư* = user id, ổn định qua mọi bot.
+Nhưng nếu kênh OPS là **group**, bot OPS phải được **add vào group đó** thì mới gửi
+được (group id giống nhau qua các bot, nhưng bot phải là thành viên).
+
+Muốn **3 bot** (tách notify khỏi duyệt): đặt thêm `TELEGRAM_NOTIFY_BOT` /
+`TELEGRAM_APPROVAL_BOT` (rỗng = theo `TELEGRAM_OPS_BOT`), tạo token tương ứng, và
+chạy poller `approvals-only` cho bot duyệt.
+
 ## Lưu ý vận hành
 - Một lượt agent/chat chạy tuần tự: đang xử lý mà nhắn tiếp → bot báo "đang chạy".
 - `claude -p` quá `TELEGRAM_AGENT_TIMEOUT` (mặc định 1800s) → hủy và báo lại.

@@ -103,17 +103,27 @@ def main():
     if category != "danger" and category in _auto_set():
         _out("allow", f"auto-approve ({category})")
 
-    chat = os.environ.get("CLAUDE_TG_CHAT_ID") or cfg.get_list("TELEGRAM_ALLOWED_CHATS")[:1]
-    if isinstance(chat, list):
-        chat = chat[0] if chat else ""
-    if not chat:
-        _out("deny", "không có CLAUDE_TG_CHAT_ID để hỏi duyệt")
-
     try:
         import approvals
         import tg_api
     except Exception as e:  # noqa: BLE001
         _out("deny", f"không nạp được module duyệt: {e}")
+
+    # Route the approval card to the ops/approval bot when one is configured
+    # (TELEGRAM_OPS_BOT / TELEGRAM_APPROVAL_BOT). A private chat's id == the user's
+    # id, stable across bots, so CLAUDE_TG_CHAT_ID still reaches the right person
+    # via the ops bot; an explicit ops channel/allowlist wins when present.
+    appr_bot = tg_api.approval_bot()
+    chat = cfg.get("TELEGRAM_APPROVAL_CHAT")
+    if not chat and appr_bot:
+        chat = (tg_api.allowed_chats(appr_bot)[:1] or [""])[0]
+    if not chat:
+        chat = os.environ.get("CLAUDE_TG_CHAT_ID") or ""
+    if not chat:
+        chat = (cfg.get_list("TELEGRAM_ALLOWED_CHATS")[:1] or [""])[0]
+    if not chat:
+        _out("deny", "không có chat để hỏi duyệt (đặt CLAUDE_TG_CHAT_ID hoặc "
+                     "TELEGRAM_ALLOWED_CHATS[_OPS])")
 
     req_id = approvals.create(tool, summary, detail, risk)
     flag = "⚠️ <b>NGUY HIỂM</b>\n" if risk == "danger" else ""
@@ -123,7 +133,8 @@ def main():
         f"<b>Việc:</b> <code>{html.escape(summary)}</code>\n"
         + (f"\n<pre>{html.escape(detail[:1200])}</pre>" if detail and detail != summary else "")
     )
-    resp = tg_api.send_message(chat, text, reply_markup=tg_api.approve_keyboard(req_id))
+    resp = tg_api.send_message(chat, text, reply_markup=tg_api.approve_keyboard(req_id),
+                               bot=appr_bot)
     if not resp.get("ok"):
         _out("deny", f"không gửi được yêu cầu duyệt: {resp.get('description')}")
 

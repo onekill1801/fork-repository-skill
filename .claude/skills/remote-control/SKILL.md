@@ -29,6 +29,11 @@ CLAUDE_BIN=                             # rỗng = 'claude' trên PATH
 > Lấy `chat_id`: nhắn bot bất kỳ, rồi `python tg_api.py me` + xem update, hoặc khởi động bridge rồi
 > gửi `/whoami`. Chat chưa có trong allowlist bị chặn và bridge báo lại chat_id để bạn thêm.
 
+> **Tách 2 bot (tùy chọn):** một bot CODE (nhắn → agent) + một bot OPS (monitor + thông báo +
+> nút Duyệt) cho gọn kênh. Đặt `TELEGRAM_OPS_BOT=ops` + `TELEGRAM_BOT_TOKEN_OPS` +
+> `TELEGRAM_ALLOWED_CHATS_OPS`, rồi chạy thêm `python telegram_bridge.py --bot ops --mode
+> approvals-only`. Rỗng = mọi thứ trên 1 bot (như cũ). Chi tiết: `cookbook/setup.md`.
+
 ## Workflow
 
 ### Khởi động bridge (trên máy hub luôn-bật)
@@ -100,8 +105,8 @@ python bg_notify.py --label "Build dev etask" -- python jenkins.py build --proje
 ## Tools (`.claude/skills/remote-control/tools/`)
 
 ```
-python tg_api.py me|test|send <chat> "text"        # Telegram Bot API (kiểm tra wiring)
-python telegram_bridge.py [--test]                 # daemon: Telegram -> claude -p (full agent)
+python tg_api.py me|test|send <chat> "text" [bot]  # Telegram Bot API (kiểm tra wiring; [bot]=tên bot)
+python telegram_bridge.py [--bot ops] [--mode full|approvals-only] [--test]   # daemon (1/token)
 python telegram_approve.py                          # PreToolUse hook (bridge gọi, không gọi tay)
 python ssh_exec.py list|ping <a>|run <a> "<cmd>" [--dry-run]|classify "<cmd>"
 ```
