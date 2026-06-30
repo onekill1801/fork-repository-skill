@@ -30,7 +30,7 @@ source before first use to understand exact function signatures.
 | `tools/client.py` | Shared urllib HTTP client — PAT via `X-eTask-PAT` header, SSL toggle |
 | `tools/tasks.py` | Task CRUD: get, query, create, update, delete, complete, move, sprint ops |
 | `tools/checklists.py` | Checklist items, comments, and file attachments |
-| `tools/projects.py` | Projects, sprints, workspaces, lists/boards |
+| `tools/projects.py` | Projects, sprints, workspaces, lists/boards — read + write (create project/sprint/list, start/complete sprint) |
 | `tools/search.py` | Elasticsearch-backed task search (full-text + filters, incl. `--status-type`) |
 | `tools/view.py` | Shared output shaping — lean `summary`/`table`/`json` views for list & read tools |
 | `tools/analytics.py` | Statistics, trends, overdue, finish rates + dashboard summaries / workload / drill-down |
@@ -90,12 +90,13 @@ source before first use to understand exact function signatures.
 7. Post comment: `python3 checklists.py add-comment TASK_ID "CONTENT"`
 8. Delete comment: ⚠️ Confirm → `python3 checklists.py del-comment COMMENT_ID`
 
-### Workflow 4: Project & Sprint Navigation _(read-only)_
+### Workflow 4: Project & Sprint Navigation _(read + write)_
 
 **Triggers:** "list my projects", "show sprints", "get sprint details",
-"which project is this list in", "show workspace", "list boards", "dự án của tôi"
+"which project is this list in", "show workspace", "list boards", "dự án của tôi",
+"create project", "create sprint", "start/complete sprint", "create list/board"
 
-**Steps:**
+**Steps (read):**
 1. Read `cookbook/project-sprint-navigation.md`
 2. My projects: `python3 projects.py my-projects`
 3. Project details: `python3 projects.py get-project PROJECT_ID`
@@ -105,6 +106,12 @@ source before first use to understand exact function signatures.
 7. Workspace: `python3 projects.py workspace WORKSPACE_ID`
 8. Lists in workspace: `python3 projects.py lists WORKSPACE_ID`
 9. My lists: `python3 projects.py my-lists`
+
+**Steps (write — confirm trước; server enforce scope write + membership):**
+- Create project: `python3 projects.py create-project "Tên" [--code DM] [--priority HIGH]`
+- Create sprint: `python3 projects.py create-sprint PROJECT_ID "Sprint 1" [--goal ...]`
+- Start / complete sprint: `python3 projects.py start-sprint SPRINT_ID` · `complete-sprint SPRINT_ID`
+- Create list/board: `python3 projects.py create-list "Tên list"`
 
 ### Workflow 5: Analytics & Reporting _(read-only)_
 
@@ -131,15 +138,28 @@ source before first use to understand exact function signatures.
    - **Drill-down 1 metric:** `python3 analytics.py by-metric --scope my|org|user|project --metric overdue|expiringSoon|urgent|completed|inProgress [--ref-id ID]`
    - **Task gần đây:** `python3 analytics.py recent [--scope my|org] [--size N]`
 
-### Workflow 6: Governed Search _(read-only, an toàn)_
+### Workflow 6: Governed Search / Virtual model _(read-only, an toàn)_
 
-DSL query có kiểm soát — chỉ entity/field/op nằm trong whitelist server (task: status, priority,
-listTaskId, parentId, name, startDate, dueDate). Server inject tenant + ép LIMIT, không gửi SQL thô.
+**Semantic layer**: 3 entity logic — `task` / `project` / `list_task` — field ánh xạ cột vật lý (sharded),
+server tự **route SQL↔ES**, inject tenant + ACL, tự điền field selectable (`projectName`/`creatorName`).
+- `task`: id/status/priority/listTaskId/parentId/projectId (EQ/IN), name (CONTAINS), startDate/dueDate
+  (GT/GTE/LT/LTE), `daysOverdue` (computed), `isMine`/`createdByMe` (EQ). `projectId` EQ → SQL 1-shard;
+  cross-project (cần `isMine`/`createdByMe=true`) → ES.
+- `project`: id/name/code/status/startDate (chỉ project mình là member) · `list_task`: id/name/priority/dates/template.
 ```
-python3 governed_search.py search --entity task --filter "priority:IN:HIGH,URGENT" --limit 50
-python3 governed_search.py search --entity task --filter "name:CONTAINS:report"
+python3 governed_search.py search --entity task --filter "isMine:EQ:true" --filter "daysOverdue:GTE:3"
+python3 governed_search.py search --entity project   --filter "name:CONTAINS:kpi"
+python3 governed_search.py search --entity list_task --filter "template:EQ:false"
 ```
-Field/op ngoài whitelist → server trả `GOVERNED_QUERY_REJECTED` (dùng để biết cái gì được phép).
+Field/op ngoài whitelist → `GOVERNED_QUERY_REJECTED`. Chi tiết bảng field: `cookbook/ai-capabilities-governance.md` (§2bis).
+
+### Workflow 7: AI Capabilities & Governance _(hiểu trước khi dùng nâng cao)_
+
+Tổng quan **Claude làm được gì với eTask** + mô hình **governance** (scope/permission, governed-query READ
+an toàn, write-authz theo entity chống IDOR, degrade/manager cho tool per-person, audit + default-redact,
+fail-closed). Đọc khi: gặp `PERMISSION_DENIED`/`TOOL_RESTRICTED`/`GOVERNED_QUERY_REJECTED`, cần biết phạm vi
+năng lực, hoặc lên kế hoạch thao tác WRITE/aggregate.
+→ **`cookbook/ai-capabilities-governance.md`**
 
 ## Routing Rules
 
@@ -151,6 +171,8 @@ Field/op ngoài whitelist → server trả `GOVERNED_QUERY_REJECTED` (dùng đ�
 | "update task" / "complete task" / "delete task" | Workflow 2 | `cookbook/task-crud.md` |
 | "add checklist" / "add comment" / "view comments" | Workflow 3 | `cookbook/checklist-comments.md` |
 | "list projects" / "show sprints" / "workspace" | Workflow 4 | `cookbook/project-sprint-navigation.md` |
+| "create project/sprint/list" / "start/complete sprint" | Workflow 4 (write) | `cookbook/ai-capabilities-governance.md` |
+| "what can you do with etask" / "permission denied" / "governance" / "Claude làm được gì" | Workflow 7 | `cookbook/ai-capabilities-governance.md` |
 | "statistics" / "task stats" / "overdue" / "thống kê" | Workflow 5 | `cookbook/analytics-reporting.md` |
 
 ## Slash Commands
@@ -175,3 +197,4 @@ Run Python from `tools/` — `python3` on Linux/macOS, `python` on Windows if `p
 7. **Search fallback:** if Elasticsearch is down, fall back to `tasks.py query` (direct DB via API).
 8. **Cap bulk operations** at 20 items per agent turn — ask user to confirm if more needed.
 9. **PAT bootstrap:** `auth.py create` requires a session JWT, not a PAT — user must run the curl in `cookbook/project-sprint-navigation.md` manually first.
+10. **Governance (server-enforced):** tool route qua governance — gặp `PERMISSION_DENIED` (thiếu scope / không phải thành viên project), `TOOL_RESTRICTED` (tool per-person, non-manager), `GOVERNED_QUERY_REJECTED` (field/op ngoài whitelist) → **báo người dùng, KHÔNG retry mù**. Chi tiết + năng lực đầy đủ: `cookbook/ai-capabilities-governance.md`.

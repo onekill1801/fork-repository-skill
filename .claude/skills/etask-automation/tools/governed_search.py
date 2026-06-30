@@ -6,15 +6,25 @@ query over whitelisted data. The server compiles the query (rejecting any
 entity/field/op not on its whitelist), injects the tenant server-side, and enforces
 a row limit. No raw SQL is sent.
 
-Usage:
-  python3 governed_search.py search --entity task \
-      --filter "status_type:eq:overdue" --filter "priority:in:HIGH,URGENT" --limit 50
-  python3 governed_search.py search --entity task --filter "name:contains:report"
+VIRTUAL MODEL (semantic layer) — 3 entity logic, field ánh xạ cột vật lý (sharded), tự route SQL/ES:
+  - task: id, status, priority, listTaskId, parentId, projectId (EQ/IN) · name (CONTAINS) ·
+          startDate, dueDate (GT/GTE/LT/LTE) · daysOverdue [computed] (GT/GTE/LT/LTE) ·
+          isMine, createdByMe [current-user] (EQ) · projectName, creatorName [selectable, tự điền].
+          projectId EQ -> route SQL 1-shard; cross-project (cần isMine/createdByMe=true) -> ES read-model.
+  - project: id, name (CONTAINS), code, status, startDate. Scope = chỉ project mình là thành viên.
+  - list_task: id, name (CONTAINS), priority, startDate, dueDate, template (EQ). Scope theo list-task của mình.
 
-Filter format: "field:op:value"  (repeatable --filter).
-  - op with multiple values (e.g. in/between): give value as a comma list -> sent as array.
-  - The server enforces the allowed entity/field/op whitelist; an invalid one returns
-    a clear error (use that to discover what's permitted).
+Usage:
+  python3 governed_search.py search --entity task --filter "isMine:EQ:true" --filter "daysOverdue:GTE:3"
+  python3 governed_search.py search --entity task --filter "projectId:EQ:P1" --filter "priority:IN:HIGH,URGENT"
+  python3 governed_search.py search --entity project   --filter "name:CONTAINS:kpi"
+  python3 governed_search.py search --entity list_task --filter "template:EQ:false"
+
+Filter format: "field:op:value"  (repeatable --filter). Op: EQ/IN/CONTAINS/GT/GTE/LT/LTE (theo field).
+  - op nhiều giá trị (IN): value là danh sách phân tách dấu phẩy -> gửi dạng mảng.
+  - Server enforce whitelist entity/field/op + inject tenant + ACL + LIMIT; field/op ngoài whitelist ->
+    GOVERNED_QUERY_REJECTED (dùng để biết cái gì được phép). Selectable (projectName/creatorName) tự điền,
+    tenant-safe; KHÔNG lọc theo selectable.
 """
 
 import argparse
@@ -61,7 +71,7 @@ if __name__ == "__main__":
 
     if cmd == "search":
         parser = argparse.ArgumentParser(prog="governed_search.py search")
-        parser.add_argument("--entity", default="task", help="whitelisted entity (currently: task)")
+        parser.add_argument("--entity", default="task", help="whitelisted entity: task | project | list_task")
         parser.add_argument("--filter", dest="filters", action="append", default=[],
                             help="'field:op:value' (repeatable)")
         parser.add_argument("--limit", type=int, default=None, help="max rows (server caps, e.g. 200)")

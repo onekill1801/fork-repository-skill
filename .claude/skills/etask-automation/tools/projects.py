@@ -14,6 +14,13 @@ Usage:
   python3 projects.py get-list <list_id>
   python3 projects.py lists <workspace_id>
   python3 projects.py my-lists
+
+  # [WRITE] (cần scope write + là thành viên project — server enforce authz)
+  python3 projects.py create-project <name> [--code C] [--priority P] [--description D]
+  python3 projects.py create-sprint <project_id> <name> [--goal G] [--start-date ISO] [--end-date ISO]
+  python3 projects.py start-sprint <sprint_id>
+  python3 projects.py complete-sprint <sprint_id>
+  python3 projects.py create-list <name> [--description D] [--priority P]
 """
 
 import argparse
@@ -86,6 +93,46 @@ def query_my_lists() -> dict:
     return r
 
 
+# ── WRITE wrappers (server enforce scope write + membership/tenant authz) ────────
+
+def _compact(d: dict) -> dict:
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def create_project(name, code=None, priority=None, description=None) -> dict:
+    r = client.execute_tool("create_project", _compact(
+        {"name": name, "code": code, "priority": priority, "description": description}))
+    client.check_error(r, "create_project")
+    return r
+
+
+def create_sprint(project_id, name, goal=None, start_date=None, end_date=None) -> dict:
+    r = client.execute_tool("create_sprint", _compact(
+        {"project_id": project_id, "name": name, "goal": goal,
+         "start_date": start_date, "end_date": end_date}))
+    client.check_error(r, "create_sprint")
+    return r
+
+
+def start_sprint(sprint_id) -> dict:
+    r = client.execute_tool("start_sprint", {"sprint_id": sprint_id})
+    client.check_error(r, "start_sprint")
+    return r
+
+
+def complete_sprint(sprint_id) -> dict:
+    r = client.execute_tool("complete_sprint", {"sprint_id": sprint_id})
+    client.check_error(r, "complete_sprint")
+    return r
+
+
+def create_list(name, description=None, priority=None) -> dict:
+    r = client.execute_tool("create_list", _compact(
+        {"name": name, "description": description, "priority": priority}))
+    client.check_error(r, "create_list")
+    return r
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -153,6 +200,45 @@ if __name__ == "__main__":
 
     elif cmd == "my-lists":
         client.print_json(query_my_lists())
+
+    elif cmd == "create-project":
+        parser = argparse.ArgumentParser(prog="projects.py create-project")
+        parser.add_argument("name")
+        parser.add_argument("--code", default=None)
+        parser.add_argument("--priority", default=None)
+        parser.add_argument("--description", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(create_project(args.name, args.code, args.priority, args.description))
+
+    elif cmd == "create-sprint":
+        parser = argparse.ArgumentParser(prog="projects.py create-sprint")
+        parser.add_argument("project_id")
+        parser.add_argument("name")
+        parser.add_argument("--goal", default=None)
+        parser.add_argument("--start-date", dest="start_date", default=None)
+        parser.add_argument("--end-date", dest="end_date", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(create_sprint(args.project_id, args.name, args.goal, args.start_date, args.end_date))
+
+    elif cmd == "start-sprint":
+        parser = argparse.ArgumentParser(prog="projects.py start-sprint")
+        parser.add_argument("sprint_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(start_sprint(args.sprint_id))
+
+    elif cmd == "complete-sprint":
+        parser = argparse.ArgumentParser(prog="projects.py complete-sprint")
+        parser.add_argument("sprint_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(complete_sprint(args.sprint_id))
+
+    elif cmd == "create-list":
+        parser = argparse.ArgumentParser(prog="projects.py create-list")
+        parser.add_argument("name")
+        parser.add_argument("--description", default=None)
+        parser.add_argument("--priority", default=None)
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(create_list(args.name, args.description, args.priority))
 
     else:
         print(f"Unknown command: {cmd}\n", file=sys.stderr)
