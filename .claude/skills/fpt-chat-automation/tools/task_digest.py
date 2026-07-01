@@ -22,9 +22,15 @@ Usage
   python task_digest.py                      # run bridge, flush every 10 min
   python task_digest.py --interval 5         # flush every 5 minutes
   python task_digest.py --no-telegram        # write digest.md only, no push
+  python task_digest.py --etask --etask-list 12345
+                                             # ALSO create a task on eTask per item
+                                             # (list from --etask-list or env
+                                             #  FCHAT_DIGEST_ETASK_LIST)
   python task_digest.py --test "anh review giúp MR 412 trước trưa nay nhé"
                                              # one-shot: run extraction on this text,
                                              # print result, no WS / no side effects
+
+Messages from groups named "New Group" are ignored (never buffered).
 Stop with Ctrl+C (a final flush runs on exit).
 """
 
@@ -53,6 +59,18 @@ REPO_ROOT = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "..", ".."))
 TASKS_DIR = os.path.join(REPO_ROOT, "temp", "fchat_tasks")
 INBOX_LOG = os.path.join(TASKS_DIR, "inbox.jsonl")   # durable raw log of readable msgs
 DIGEST_MD = os.path.join(TASKS_DIR, "digest.md")     # running to-do list (markdown)
+
+# eTask CLI (separate skill; its own config.py/client.py) — we shell out to it
+# instead of importing to avoid the config/client module-name clash between skills.
+ETASK_TOOLS_DIR = os.path.abspath(
+    os.path.join(TOOLS_DIR, "..", "..", "etask-automation", "tools"))
+ETASK_TASKS_PY = os.path.join(ETASK_TOOLS_DIR, "tasks.py")
+
+# Groups whose messages are never buffered (case-insensitive, trimmed).
+IGNORED_GROUPS = {"new group"}
+
+# digest priority (Vietnamese) → eTask priority enum.
+_ETASK_PRIORITY = {"cao": "HIGH", "vừa": "MEDIUM", "thấp": "LOW"}
 
 # Telegram push + Claude account resolution via the remote-control skill
 # (best-effort import; both optional).
@@ -296,7 +314,53 @@ def _telegram_summary(tasks):
             print(f"[{_now()}] [telegram] gửi {c} lỗi: {res.get('description')}", file=sys.stderr)
 
 
-def flush(buf, push_telegram):
+def _create_etask_tasks(tasks, list_id):
+    """Create one eTask task per extracted item by shelling out to the
+    etask-automation CLI (its own config/creds). Returns (created, failed)."""
+    if not os.path.isfile(ETASK_TASKS_PY):
+        print(f"[{_now()}] [etask] không thấy {ETASK_TASKS_PY} — bỏ tạo task.",
+              file=sys.stderr)
+        return 0, len(tasks)
+    created = failed = 0
+    for t in tasks:
+        # Fold source + deadline into the description (eTask due_date wants ISO;
+        # the extracted "due" is free text, so keep it human-readable in the body).
+        desc_parts = []
+        if t["source"]:
+            desc_parts.append(f"Nguồn: {t['source']}")
+        if t["due"]:
+            desc_parts.append(f"Deadline (tự chat): {t['due']}")
+        desc_parts.append("— tự tạo từ FPT Chat digest (task_digest.py)")
+        argv = [sys.executable, ETASK_TASKS_PY, "create",
+                "--name", t["task"], "--list", str(list_id),
+                "--desc", "\n".join(desc_parts)]
+        prio = _ETASK_PRIORITY.get(t["priority"])
+        if prio:
+            argv += ["--priority", prio]
+        try:
+            r = subprocess.run(argv, cwd=ETASK_TOOLS_DIR, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace",
+                               timeout=60)
+        except Exception as e:  # noqa: BLE001
+            print(f"[{_now()}] [etask] '{t['task'][:40]}…' lỗi: {e}", file=sys.stderr)
+            failed += 1
+            continue
+        out = (r.stdout or "").strip()
+        # tasks.py prints JSON; an error surfaces as {"error": true, ...}.
+        if r.returncode != 0 or '"error": true' in out or '"error":true' in out:
+            detail = (r.stderr or out or "no output").replace("\n", " ")[:300]
+            print(f"[{_now()}] [etask] '{t['task'][:40]}…' lỗi: {detail}",
+                  file=sys.stderr)
+            failed += 1
+        else:
+            created += 1
+    if created or failed:
+        print(f"[{_now()}] [etask] tạo {created} task"
+              + (f", {failed} lỗi" if failed else "") + f" → list {list_id}")
+    return created, failed
+
+
+def flush(buf, push_telegram, etask_list=None):
     items, enc = buf.drain()
     if not items and not enc:
         return
@@ -315,6 +379,8 @@ def flush(buf, push_telegram):
         return
     _write_digest(tasks, enc)
     print(f"[{_now()}] +{len(tasks)} việc → {DIGEST_MD}")
+    if etask_list:
+        _create_etask_tasks(tasks, etask_list)
     if push_telegram:
         _telegram_summary(tasks)
 
@@ -334,13 +400,17 @@ def _handle(obj, me, buf, seen):
         return
     seen.add((gid, inc))
 
+    group = data.get("group") or {}
+    gname = group.get("name") or ""
+    if gname.strip().lower() in IGNORED_GROUPS:
+        return  # skip noise groups (e.g. unnamed "New Group")
+
     content = data.get("content")
     if crypto and listen._looks_encrypted(content):
         content = crypto.decrypt_if_needed(content)   # E2E → plaintext nếu có key
     if not content or listen._looks_encrypted(content):
         buf.bump_encrypted()                          # rỗng / vẫn ciphertext (không key) → bỏ
         return
-    group = data.get("group") or {}
     item = {
         "ts": int(time.time()),
         "gid": gid,
@@ -357,7 +427,7 @@ def _handle(obj, me, buf, seen):
     print(f"[{_now()}] [{where}] {item['sender_name']}: {content[:80]}")
 
 
-def run(interval_min, push_telegram):
+def run(interval_min, push_telegram, etask_list=None):
     me = client.api_get("/user/me").get("id")
     if not me:
         print("[ERROR] không lấy được user hiện tại (token sai?)", file=sys.stderr)
@@ -369,13 +439,14 @@ def run(interval_min, push_telegram):
     def _flusher():
         while not stop.wait(interval_min * 60):
             try:
-                flush(buf, push_telegram)
+                flush(buf, push_telegram, etask_list)
             except Exception as e:  # noqa: BLE001 - keep the bridge alive
                 print(f"[{_now()}] [flusher] lỗi: {e}", file=sys.stderr)
 
     threading.Thread(target=_flusher, daemon=True).start()
     tg = "+telegram" if push_telegram else "markdown-only"
-    print(f"[{_now()}] nghe như {me} | flush mỗi {interval_min}' | {tg} | Ctrl+C để dừng")
+    et = f" | eTask list {etask_list}" if etask_list else ""
+    print(f"[{_now()}] nghe như {me} | flush mỗi {interval_min}' | {tg}{et} | Ctrl+C để dừng")
     print(f"[{_now()}] digest: {DIGEST_MD}")
     backoff = 2
     try:
@@ -419,7 +490,7 @@ def run(interval_min, push_telegram):
     except KeyboardInterrupt:
         print(f"\n[{_now()}] dừng — flush lần cuối…")
         stop.set()
-        flush(buf, push_telegram)
+        flush(buf, push_telegram, etask_list)
 
 
 # ----------------------------- entry ----------------------------------------
@@ -428,6 +499,11 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(prog="task_digest.py")
     p.add_argument("--interval", type=int, default=10, help="phút giữa các lần trích (mặc định 10)")
     p.add_argument("--no-telegram", action="store_true", help="chỉ ghi digest.md, không push Telegram")
+    p.add_argument("--etask", action="store_true",
+                   help="ngoài digest.md, tạo task trên eTask cho mỗi việc trích được "
+                        "(cần --etask-list hoặc FCHAT_DIGEST_ETASK_LIST)")
+    p.add_argument("--etask-list", metavar="LIST_ID", default=None,
+                   help="list_task_id đích trên eTask (mặc định: env FCHAT_DIGEST_ETASK_LIST)")
     p.add_argument("--test", metavar="TEXT", help="chạy thử trích việc trên 1 câu, in ra, không WS/không side-effect")
     a = p.parse_args()
 
@@ -447,7 +523,15 @@ if __name__ == "__main__":
         client.print_json(tasks)
         sys.exit(0)
 
+    etask_list = None
+    if a.etask:
+        etask_list = a.etask_list or config.get("FCHAT_DIGEST_ETASK_LIST")
+        if not etask_list:
+            print("[ERROR] --etask cần list đích: truyền --etask-list <ID> "
+                  "hoặc đặt FCHAT_DIGEST_ETASK_LIST trong .env", file=sys.stderr)
+            sys.exit(1)
+
     try:
-        run(a.interval, push_telegram=not a.no_telegram)
+        run(a.interval, push_telegram=not a.no_telegram, etask_list=etask_list)
     except KeyboardInterrupt:
         print("\nstopped.")

@@ -89,7 +89,7 @@ python notify_group.py --group ID --text "..." [--group-type T] [--user-id UID -
 python listen.py [--reply claude|notify|off]   # long-running: route incoming msgs; DM -> per-conversation worker terminal
 python reply_worker.py <group_id>              # (auto-launched by listen.py) per-conversation auto-reply worker
 python group_watch.py [--group ID] [--once "text"]   # long-running: watch ONE group -> review MR / build dev qua claude -p
-python task_digest.py [--interval 10] [--no-telegram] [--test "text"]   # long-running: nghe DM+nhóm -> trích việc cần làm -> digest.md + Telegram (KHÔNG trả lời)
+python task_digest.py [--interval 10] [--no-telegram] [--etask [--etask-list ID]] [--test "text"]   # long-running: nghe DM+nhóm -> trích việc cần làm -> digest.md + Telegram (+eTask nếu bật) (KHÔNG trả lời)
 python auth.py refresh | token-status                                        # token mgmt (auto-refresh is automatic)
 
 python style_profile.py list | path <gid> | get <gid>                        # kho "giọng nhắn" theo từng hội thoại (gitignored)
@@ -222,11 +222,17 @@ lại bất kỳ tin nào:
   dạng checkbox, có người nhờ + deadline + độ ưu tiên) và **đẩy tóm tắt việc MỚI sang
   Telegram** (bot của skill remote-control).
 - Log thô mọi tin đọc được vào `temp/fchat_tasks/inbox.jsonl` (bền qua restart).
+- **Tuỳ chọn tạo task trên eTask** (`--etask`): mỗi việc trích được → 1 task trên eTask
+  (shell ra `etask-automation/tasks.py create`), tên = việc, ưu tiên map `cao→HIGH ·
+  vừa→MEDIUM · thấp→LOW`, nguồn + deadline nhét vào mô tả. Cần list đích: `--etask-list
+  <ID>` hoặc env `FCHAT_DIGEST_ETASK_LIST`. Không bật `--etask` → chỉ digest.md như cũ.
+- **Bỏ qua tin từ nhóm tên "New Group"** (không buffer, không trích).
 
 > ⚠️ **Giới hạn cứng:** chỉ trích được việc từ hội thoại **non-secure (plaintext)**.
 > Nhóm/DM secure → nội dung mã hoá E2E, bridge chỉ thấy metadata, **không đọc được nội dung**.
 
-Config thêm: `FCHAT_DIGEST_MODEL` (model cho `claude -p`, mặc định `sonnet`).
+Config thêm: `FCHAT_DIGEST_MODEL` (model cho `claude -p`, mặc định `sonnet`) ·
+`FCHAT_DIGEST_ETASK_LIST` (list đích cho `--etask` khi không truyền `--etask-list`).
 **Account:** spawn `claude -p` dưới account chính của `CLAUDE_ACCOUNTS` (mặc định `work`)
 bằng cách set `HOME`/`USERPROFILE` về home của account đó — tránh kế thừa creds sai gây
 401; tự fallback sang account kế tiếp khi gặp 401/quota (dùng lại logic `telegram_bridge`).

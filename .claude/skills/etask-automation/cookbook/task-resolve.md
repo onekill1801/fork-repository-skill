@@ -22,6 +22,11 @@ poll my-tasks (mọi trạng thái chưa completed: todo/processing/approved)
 Phần phân tích là **read-only** (spawn `claude -p`); mọi **WRITE** do `task_resolver.py`
 thực hiện bằng Python (`tasks.py`) **chỉ sau khi bạn bấm Duyệt** — tách bạch giống `etask_watch.py`.
 
+> **Tự trị + chỉ hỏi khi chốt nghiệp vụ**: agent phân tích chạy `--dangerously-skip-permissions`
+> → đọc code/chạy tool KHÔNG hỏi. Chỉ **quyết định nghiệp vụ** (fixed→Hoàn thành/Chờ duyệt;
+> not_fixed→Tôi tự làm/Giao người) mới hỏi bạn qua thẻ nút Telegram. An toàn vì system prompt ép
+> CHỈ ĐỌC và mọi WRITE do Python làm sau khi bạn duyệt.
+
 ## 2. Điều kiện cần (tiền đề)
 
 | Thứ | Vì sao |
@@ -65,7 +70,12 @@ Thẻ Telegram 2 nút: **`✅ Hoàn thành`** → `complete_task` · **`🕓 Ch�
   status-ID cho nhóm `approved` bằng `search_tasks(list, status_type=approved, size=1)` rồi đọc
   `.status` (đã verify khớp đúng). Không tra được (list chưa có task approved) → fallback
   `.env ETASK_RESOLVE_STATUS_REVIEW=<statusId>`; vẫn không có → báo & không đổi.
-  `complete_task` (Hoàn thành) là đường chuẩn, không cần status-ID.
+  `complete_task` (Hoàn thành) là đường chuẩn, không cần status-ID (set `status='DONE'`).
+- ✅ **Đổi trạng thái CHẠY & LƯU DB** (verify qua `get_task`). ⚠️ Nhưng `search_*` là **Elasticsearch, index
+  trễ vài giây** → đọc lại bằng `search` ngay sau khi ghi có thể thấy trạng thái CŨ (không phải lỗi).
+  Muốn xác nhận tức thì thì dùng `tasks.py get <id>` (đọc thẳng DB).
+- ⚠️ Hạn chế tra status-ID: status-ID theo TỪNG list, không mượn chéo list; nếu list chưa có task nào ở
+  nhóm đích thì không tra được → tool degrade (bỏ qua đổi trạng thái, vẫn làm estimate/comment/assign + báo).
 
 ### 4b. NOT_FIXED — chưa fix
 Thẻ 1: **`👤 Tôi tự làm`** | **`➡️ Giao người khác`**.
@@ -76,6 +86,11 @@ Thẻ 1: **`👤 Tôi tự làm`** | **`➡️ Giao người khác`**.
   `team.py match --exclude <ETASK_MY_LOGIN>` → `team.py get` (đọc `etask_id`). Khi duyệt:
   `assign_task_users(task, [userId], mode=add)` + comment thông tin bổ sung + chỉnh estimate.
   - Thiếu `etask_id` của người đó → tool báo và **không** gán (bạn gán tay / bổ sung team.json).
+
+> **Bổ sung thông tin → NỐI vào DESCRIPTION** (`_add_note` → `update_task(description=)`), thuần skill.
+> KHÔNG dùng comment: AI tool `create_comment` luôn set `commentIn` nên UI eTask ẩn comment — chỉ sửa
+> được ở backend (ngoài phạm vi skill). `_add_note` nối ghi-chú vào description hiện có (lấy từ ES record
+> của task → không ghi đè mô tả cũ).
 
 ### 4c. UNCLEAR
 Map project không rõ hoặc không đủ chắc để kết luận → chỉ báo Telegram, **không ghi**.
@@ -100,6 +115,7 @@ Map project không rõ hoặc không đủ chắc để kết luận → chỉ b
 | `ETASK_RESOLVE_STATUS_INPROGRESS` | *(tự tra)* | **status-ID** fallback cho "đang làm" (nhóm processing) |
 | `ETASK_RESOLVE_STATUS_REVIEW` | *(tự tra)* | **status-ID** fallback cho "chờ phê duyệt" (nhóm approved) |
 | `ETASK_MY_LOGIN` | `chungtv8` | login của tôi (loại khỏi gợi ý assignee) |
+| `ETASK_RESOLVE_NOTE_CHANNEL` | `description` | kênh ghi-chú bổ sung: `description` (hiện ngay) hoặc `comment` (chỉ hiện nếu BE đã vá+deploy) |
 | (dùng lại) `TELEGRAM_APPROVAL_TIMEOUT`, `TELEGRAM_AGENT_MODEL`, `CLAUDE_ACCOUNTS` | | |
 
 ## 7. Khác biệt với `etask_watch.py` (triage)

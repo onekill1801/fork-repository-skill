@@ -90,8 +90,14 @@ def _now():
     return time.strftime("%H:%M:%S")
 
 
+def _log(msg):
+    """Ghi ra stdout kèm giờ + flush ngay (để log nền/pipe thấy real-time)."""
+    print(f"[{_now()}] {msg}", flush=True)
+
+
 def _iso(d: datetime.date) -> str:
-    return d.strftime("%Y-%m-%dT00:00:00")
+    # eTask server dùng Instant.parse → BẮT BUỘC có 'Z' (UTC), thiếu sẽ lỗi parse.
+    return d.strftime("%Y-%m-%dT00:00:00Z")
 
 
 def _load_state() -> dict:
@@ -143,6 +149,7 @@ def _my_tasks() -> list:
             "due": t.get("dueDate") or "",
             "percent": t.get("percent"),
             "priority": t.get("priority"),
+            "description": t.get("description") or "",   # từ ES record → để NỐI note, không ghi đè
             # assignee/reviewer chỉ có trong record SEARCH (get_task KHÔNG trả) → mang theo để dedup
             "assignTaskList": t.get("assignTaskList") or [],
             "assignReviewList": t.get("assignReviewList") or [],
@@ -163,19 +170,28 @@ def _user_ids(assign_list) -> list:
 
 
 def _status_id_for(list_task_id, status_type):
-    """Tra status-ID (mờ, theo từng list) cho một nhóm statusType — bằng cách lấy 1 task
-    đang ở nhóm đó trong CÙNG list. None nếu không tìm được.
-    Cần vì update_task(status=...) nhận status-ID, KHÔNG nhận keyword OPEN/DONE."""
+    """Tra status-ID (mờ, theo từng list) cho một nhóm statusType. None nếu list KHÔNG có
+    cột thuộc nhóm đó. Cần vì update_task(status=...) nhận status-ID theo-list, không nhận keyword.
+
+    ⚠️ KHÔNG lọc bằng status_type ở server (ES trả TASK CHÉO LIST → mượn nhầm status-ID của list
+    khác, set vào task sẽ KHÔNG đổi được). Thay vào đó: lấy task TRONG list rồi chỉ nhận status-ID
+    của row THỰC SỰ thuộc list này + đúng statusType."""
     if not list_task_id:
         return None
     try:
-        r = search.search_tasks(list_task_id=list_task_id, status_type=[status_type], size=1)
+        r = search.search_tasks(list_task_id=list_task_id, size=100)
     except SystemExit:
         return None
     if not isinstance(r, dict) or r.get("error"):
         return None
     rows = ((r.get("content") or {}).get("data")) or []
-    return rows[0].get("status") if rows else None
+    st = status_type.lower()
+    for x in rows:
+        if (x.get("listTaskId") == list_task_id
+                and (x.get("statusType") or "").lower() == st
+                and x.get("status")):
+            return x.get("status")
+    return None
 
 
 def _resolve_status(task, status_type, env_key):
@@ -247,8 +263,12 @@ def _parse_verdict(text: str) -> dict:
 
 
 def _analyze(task, chat) -> tuple:
-    """Spawn claude -p (read-only) → (full_text, verdict_dict|None)."""
-    settings = tb._write_bridge_settings()   # gắn hook duyệt → mọi write lỡ tay vẫn bị chặn
+    """Spawn claude -p (read-only) → (full_text, verdict_dict|None).
+
+    Agent phân tích chạy TỰ TRỊ (`--dangerously-skip-permissions`): đọc code/chạy tool KHÔNG
+    hỏi người dùng. An toàn vì system prompt ép CHỈ ĐỌC + mọi WRITE nghiệp vụ do Python làm SAU
+    khi bạn duyệt qua thẻ Telegram. Chỉ 'chốt nghiệp vụ' (Hoàn thành/Chờ duyệt · Tự làm/Giao người)
+    mới hỏi bạn."""
     env, _, _ = _claude_env(chat)
     sys_prompt = _ANALYSIS_SYS.replace("<my_login>", _my_login())
     prompt = (
@@ -260,7 +280,7 @@ def _analyze(task, chat) -> tuple:
         f"file:dòng, rủi ro) và kết thúc bằng khối [[VERDICT]] theo quy định."
     )
     argv = [tb._claude_bin(), "-p", prompt, "--output-format", "json",
-            "--append-system-prompt", sys_prompt, "--settings", settings]
+            "--append-system-prompt", sys_prompt, "--dangerously-skip-permissions"]
     if rccfg.get("TELEGRAM_AGENT_MODEL"):
         argv += ["--model", rccfg.get("TELEGRAM_AGENT_MODEL")]
     timeout = int(rccfg.get("ETASK_RESOLVE_TIMEOUT", "900") or "900")
@@ -309,16 +329,32 @@ def _notify(chat, text):
         print(f"[{_now()}] [WARN] gửi Telegram lỗi: {e}", file=sys.stderr)
 
 
-def _comment(task_id: str, body: str) -> bool:
-    """Đăng comment thông tin bổ sung lên task (qua checklists.add-comment CLI)."""
-    cl = os.path.join(TOOLS_DIR, "checklists.py")
+def _add_note(task: dict, note: str) -> bool:
+    """Bổ sung thông tin cho task. Kênh theo ETASK_RESOLVE_NOTE_CHANNEL:
+      - 'description' (mặc định): NỐI vào description hiện có (thuần skill, UI hiện ngay,
+        không ghi đè mô tả cũ — lấy desc từ ES record trong `task`).
+      - 'comment': tạo comment (chỉ HIỆN trên UI nếu backend đã vá create_comment bỏ commentIn
+        + deploy; nếu chưa deploy comment sẽ bị ẩn)."""
+    channel = (rccfg.get("ETASK_RESOLVE_NOTE_CHANNEL") or "description").strip().lower()
+    if channel == "comment":
+        cl = os.path.join(TOOLS_DIR, "checklists.py")
+        try:
+            proc = subprocess.run([sys.executable, cl, "add-comment", task["id"], note],
+                                  cwd=TOOLS_DIR, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=60)
+            return proc.returncode == 0
+        except Exception as e:  # noqa: BLE001
+            print(f"[{_now()}] [WARN] add-comment lỗi: {e}", file=sys.stderr)
+            return False
+    # description (mặc định)
+    cur = (task.get("description") or "").rstrip()
+    stamp = time.strftime("%Y-%m-%d %H:%M")
+    new = (f"{cur}\n\n" if cur else "") + f"[auto-resolver {stamp}] {note}"
     try:
-        proc = subprocess.run([sys.executable, cl, "add-comment", task_id, body],
-                              cwd=TOOLS_DIR, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=60)
-        return proc.returncode == 0
-    except Exception as e:  # noqa: BLE001
-        print(f"[{_now()}] [WARN] add-comment lỗi: {e}", file=sys.stderr)
+        task_api.update_task(task["id"], description=new)
+        return True
+    except SystemExit:
+        print(f"[{_now()}] [WARN] add-note (description) lỗi cho {task['id']}", file=sys.stderr)
         return False
 
 
@@ -338,34 +374,56 @@ def _set_estimate(task_id: str, days):
         pass
 
 
+def _db_status(task_id):
+    """Đọc status THẬT từ DB (get_task, không qua ES) để verify sau khi ghi."""
+    try:
+        r = task_api.get_task(task_id)
+    except SystemExit:
+        return None
+    d = r.get("content") if isinstance(r, dict) and isinstance(r.get("content"), dict) else r
+    return d.get("status") if isinstance(d, dict) else None
+
+
 # ── per-task resolution ─────────────────────────────────────────────
 def _handle_fixed(task, chat, v):
     summary = (f"🟢 <b>Task có vẻ ĐÃ FIX trong code</b>\n<b>{html.escape(task['name'])}</b>\n"
                f"<i>{html.escape(task['project'])} · {task['statusType']}</i>\n"
                f"Lý do: {html.escape(v['reason'][:300])}\n\nChốt trạng thái nào?")
     pick = _ask(chat, summary, "✅ Hoàn thành", "🕓 Chờ phê duyệt", task)
+    _log(f"[FIXED] {task['id']} → duyệt: {'Hoàn thành' if pick=='yes' else ('Chờ phê duyệt' if pick=='no' else 'timeout')}")
     if pick == "timeout":
         _notify(chat, f"⏭️ Hết hạn duyệt — chưa đổi trạng thái task <b>{html.escape(task['name'][:60])}</b>.")
         return
+    before = _db_status(task["id"])
     if pick == "yes":
         try:
             task_api.complete_task(task["id"])
-            _notify(chat, f"✅ Đã đánh dấu HOÀN THÀNH: <b>{html.escape(task['name'][:60])}</b>.")
         except SystemExit:
-            _notify(chat, "⚠️ complete_task lỗi — xem log máy chủ.")
+            _notify(chat, "⚠️ complete_task lỗi — xem log máy chủ."); return
+        after = _db_status(task["id"])
+        ok = after and after != before
+        _log(f"[ACTION] {task['id']} complete_task → status={after} ({'OK' if ok else 'CHƯA đổi'})")
+        _notify(chat, (f"✅ Đã đánh dấu HOÀN THÀNH: <b>{html.escape(task['name'][:60])}</b> "
+                       f"(status=<code>{html.escape(str(after))}</code>)." if ok else
+                       f"⚠️ Gọi hoàn thành nhưng DB chưa đổi (status vẫn <code>{html.escape(str(after))}</code>). "
+                       f"Kiểm tra trong UI."))
     else:
         review = _resolve_status(task, "approved", "ETASK_RESOLVE_STATUS_REVIEW")
         if not review:
-            _notify(chat, "⚠️ Không tra được status-ID 'chờ phê duyệt' cho list này "
-                          "(list chưa có task nào ở nhóm approved). Đặt "
-                          "<code>ETASK_RESOLVE_STATUS_REVIEW=&lt;statusId&gt;</code> trong .env.")
+            _notify(chat, "⚠️ List này KHÔNG có cột 'chờ phê duyệt' (approved). Không đổi được — "
+                          "chọn Hoàn thành, hoặc set <code>ETASK_RESOLVE_STATUS_REVIEW=&lt;statusId&gt;</code> nếu có.")
             return
         try:
             task_api.update_task(task["id"], status=review)
-            _notify(chat, f"🕓 Đã chuyển <b>{html.escape(task['name'][:60])}</b> sang chờ phê duyệt "
-                          f"(status=<code>{html.escape(str(review))}</code>).")
         except SystemExit:
-            _notify(chat, f"⚠️ update_task(status={html.escape(str(review))}) lỗi — xem log máy chủ.")
+            _notify(chat, f"⚠️ update_task(status={html.escape(str(review))}) lỗi — xem log máy chủ."); return
+        after = _db_status(task["id"])
+        ok = after == review
+        _log(f"[ACTION] {task['id']} set approved={review} → DB status={after} ({'OK' if ok else 'CHƯA đổi'})")
+        _notify(chat, (f"🕓 Đã chuyển <b>{html.escape(task['name'][:60])}</b> sang chờ phê duyệt "
+                       f"(status=<code>{html.escape(str(review))}</code>)." if ok else
+                       f"⚠️ Gọi chuyển 'chờ phê duyệt' nhưng DB chưa nhận (status vẫn "
+                       f"<code>{html.escape(str(after))}</code>). Có thể do workflow eTask — đổi trong UI."))
 
 
 def _handle_not_fixed(task, chat, v):
@@ -373,6 +431,7 @@ def _handle_not_fixed(task, chat, v):
             f"<i>{html.escape(task['project'])} · {task['statusType']}</i>\n"
             f"Lý do: {html.escape(v['reason'][:300])}\n\nBạn xử lý thế nào?")
     pick = _ask(chat, head, "👤 Tôi tự làm", "➡️ Giao người khác", task)
+    _log(f"[NOT_FIXED] {task['id']} → duyệt: {'Tôi tự làm' if pick=='yes' else ('Giao người khác' if pick=='no' else 'timeout')}")
     if pick == "timeout":
         _notify(chat, f"⏭️ Hết hạn duyệt — chưa xử lý task <b>{html.escape(task['name'][:60])}</b>.")
         return "skip"
@@ -386,7 +445,7 @@ def _handle_not_fixed(task, chat, v):
                 except SystemExit:
                     pass
         _set_estimate(task["id"], v.get("estimate_days"))
-        _comment(task["id"], f"[auto-resolver] Tôi nhận xử lý task này. Phân tích: {v['reason']}")
+        _add_note(task, f"Tôi (chungtv8) nhận xử lý task này. Phân tích: {v['reason']}")
         _notify(chat, f"👤 OK — bạn giữ <b>{html.escape(task['name'][:60])}</b> để tự làm/theo dõi. "
                       f"Đã chỉnh estimate + ghi chú.")
         return "self"
@@ -411,11 +470,12 @@ def _handle_not_fixed(task, chat, v):
         return "skip"
     try:
         task_api.assign_task_users(task["id"], [int(uid)], mode="add")
+        _log(f"[ACTION] {task['id']} assign_task_users {name}({uid}) OK")
     except SystemExit:
         _notify(chat, "⚠️ assign_task_users lỗi — xem log máy chủ.")
         return "skip"
     _set_estimate(task["id"], v.get("estimate_days"))
-    _comment(task["id"], f"[auto-resolver] Giao cho {name}. Thông tin bổ sung từ phân tích: {v['reason']}")
+    _add_note(task, f"Giao cho {name}. Thông tin bổ sung từ phân tích: {v['reason']}")
     _notify(chat, f"✅ Đã giao <b>{html.escape(task['name'][:60])}</b> cho <b>{html.escape(name)}</b> "
                   f"(thêm comment + chỉnh estimate).")
     return name
@@ -424,12 +484,16 @@ def _handle_not_fixed(task, chat, v):
 def _handle_task(task, chat, state):
     with _busy:
         try:
-            print(f"[{_now()}] [RESOLVE] {task['id']} {task['name']!r} → xác minh code…")
+            _log(f"[RESOLVE] {task['id']} {task['name']!r} → xác minh code…")
             full, v = _analyze(task, chat)
             if v is None:
+                _log(f"[VERDICT] {task['id']} → LỖI phân tích: {full[:200]}")
                 _notify(chat, f"⚠️ Phân tích task <code>{html.escape(task['id'])}</code> lỗi:\n"
                               f"{html.escape(full[:500])}")
                 return
+            _log(f"[VERDICT] {task['id']} → {v['status']} | project={v.get('project')} "
+                 f"| assignee={v.get('assignee_name')}({v.get('assignee_etask_id')}) "
+                 f"| est={v.get('estimate_days')} | {v.get('reason','')[:120]}")
             summary = full.split("[[VERDICT]]")[0].strip()
             _notify(chat, f"🗂️ <b>{html.escape(task['name'])}</b>\n<pre>{html.escape(summary[:1200])}</pre>")
             assigned = task["statusType"]
