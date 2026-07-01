@@ -31,9 +31,10 @@ skill does not send messages or mutate data.
 - **E2E limit:** `send.py` sends `content` as PLAINTEXT — correct only for
   NON-secure conversations. Secure groups encrypt content (beatchat); that crypto
   is NOT implemented, so do not send into secure/encrypted groups.
-- **Message content is END-TO-END ENCRYPTED** (beatchat keypair). `messages.py list`
-  returns ciphertext bodies — metadata (sender, time, ids, media refs) is usable,
-  decrypting text is out of scope.
+- **Message content is END-TO-END ENCRYPTED** (beatchat, RSA-OAEP-2048/SHA-256).
+  `crypto.py` giải mã được KHI có private key của bạn (`work/secrets/fchat_private.pem`,
+  gitignored). `messages.py list`, `listen`, `group_watch` **tự giải mã** nếu key có
+  mặt; vắng key → trả ciphertext như cũ. Xem mục "Giải mã E2E" bên dưới.
 - **Sending messages is NOT here** — it rides a SocketCluster realtime socket
   (`wss://realtime-chat.fpt.com`), which this REST skill does not touch.
 - **Authorization:** FPT Chat is an internal E2E messenger. Use this on your own
@@ -134,6 +135,31 @@ to stdout and exit non-zero — read and handle, don't treat as a crash.
 Listener modes: `--reply claude` (default), `--reply notify` (print only),
 `--reply off` (log only). Reply model: env `FCHAT_REPLY_MODEL` (default `sonnet`).
 Heartbeat + auto-reconnect + token refresh are built in. Stop with Ctrl+C.
+
+## Giải mã E2E (`crypto.py`)
+
+Đọc được hội thoại **mã hoá** (cờ `isSecure: true`) bằng private key của chính bạn.
+Cần `cryptography` (pip/pacman). Scheme (đã xác minh từ web client beatchat):
+
+- Nội dung tin = base64. Dài = 256B → **RSA-OAEP-SHA256** decrypt trực tiếp; dài hơn →
+  256B đầu RSA-OAEP ra `[aesKey32][iv12]`, phần sau = **AES-GCM** (hybrid).
+- Private key gói trong IndexedDB `BeatchatDB > user_keys[<user>_private_CVX]`: lớp
+  **AES-GCM**, password = `clientKey` (`/user/me`); PBKDF2-HMAC-SHA256, 300k vòng;
+  blob `[iv12][ct‖tag][salt16]`. Plaintext = base64(pkcs8). (Blob QR-login cũng mở
+  được bằng secretkey: `unwrap-qr`, bỏ 21 byte đầu.)
+
+**Dựng key (một lần):** lấy giá trị IndexedDB `<user>_private_CVX` từ Console trình
+duyệt (đang đăng nhập chat.fpt.com), rồi:
+```
+python crypto.py unwrap-indexeddb --value '<base64>' --client-key <clientKey> --save
+python crypto.py conv <group_id>          # kiểm chứng: giải mã lịch sử 1 hội thoại
+python crypto.py decrypt --content '<base64>'   # giải mã 1 content
+```
+Key lưu `work/secrets/fchat_private.pem` (gitignored). Sau đó `messages.py list`,
+`listen`, `group_watch` tự giải mã. Tắt: `messages.py list --no-decrypt`.
+
+> ⚠️ Chỉ dùng trên tài khoản của CHÍNH bạn, key của chính bạn (được uỷ quyền).
+> KHÔNG commit key/PEM. `looks_encrypted()` nhận diện ciphertext để chỉ giải khi cần.
 
 ## Group watcher → review MR / build dev (`group_watch.py`)
 

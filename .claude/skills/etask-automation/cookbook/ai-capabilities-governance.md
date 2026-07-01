@@ -75,15 +75,27 @@ toàn nhất (thay cho việc gọi nhiều tool đọc rời rạc).
 
 **Entity `project`**: `id`, `name` (CONTAINS), `code`, `status`, `startDate` — scope = **chỉ project mình là thành viên**.
 **Entity `list_task`**: `id`, `name` (CONTAINS), `priority`, `startDate`, `dueDate`, `template` (EQ) — scope theo **list-task của mình**.
+**Entity `sprint`**: `id`, `name` (CONTAINS), `projectId`, `status`, `startDate`, `endDate` — scope theo project mình là thành viên.
 
 **Routing tự động:** task có `projectId` EQ → SQL 1-shard; task **cross-project** (bắt buộc `isMine`/`createdByMe=true`)
-→ **ES read-model**; project/list_task → reference/scoped SQL. Field/op ngoài whitelist → `GOVERNED_QUERY_REJECTED`.
+→ **ES read-model**; project/list_task/sprint → reference/scoped SQL. Field/op ngoài whitelist → `GOVERNED_QUERY_REJECTED`.
 
+**Quan hệ (relationship)** trả trong `describe` (vd task→project, project→tasks/sprints) — engine **không join**;
+agent tự query nhiều bước phẳng theo `navigate` hint.
+
+**Discovery (đừng dò bằng lỗi — nạp vào prompt chatbot):**
+```
+python3 governed_search.py list-entities              # entity + schemaVersion
+python3 governed_search.py describe --entity task     # field/ops/kind/selectable/sensitivity/relationships (persona-aware)
+```
+**Query:**
 ```
 python3 governed_search.py search --entity task --filter "isMine:EQ:true" --filter "daysOverdue:GTE:3"
 python3 governed_search.py search --entity project   --filter "name:CONTAINS:kpi"
 python3 governed_search.py search --entity list_task --filter "template:EQ:false"
 ```
+> `describe` **lọc field theo persona** người gọi (non-manager chỉ thấy field `ALWAYS`) — C4 đã sẵn ở server.
+> Output kèm `schemaVersion` để chatbot phát hiện schema đổi.
 
 ## 3. Quy ước khi Claude thao tác eTask
 1. **Đọc/tra cứu** thì ưu tiên tool đọc + `governed_search` (đừng tự suy diễn dữ liệu).

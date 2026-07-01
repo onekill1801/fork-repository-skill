@@ -3,10 +3,10 @@
 
 Endpoints verified from authenticated traffic capture.
 
-IMPORTANT: message *content* is END-TO-END ENCRYPTED (beatchat keypair). These
-tools return the raw server payload — text bodies will be ciphertext. Metadata
-(sender, timestamps, ids, media references) is usable; decrypting content is a
-separate, sensitive concern (needs the per-user private key + server key).
+NOTE: message *content* is END-TO-END ENCRYPTED (beatchat, RSA-OAEP). `list` now
+AUTO-DECRYPTS via crypto.py IF the private key is present
+(work/secrets/fchat_private.pem — dựng bằng `crypto.py unwrap-indexeddb`). Không có
+key → trả ciphertext như cũ. Tắt giải mã: `--no-decrypt`. Metadata luôn dùng được.
 
 Usage:
   python messages.py list <group_id> [--limit N]
@@ -26,12 +26,27 @@ import sys
 
 import client
 import config
+try:
+    import crypto   # E2E decrypt (cần work/secrets/fchat_private.pem); vắng key → no-op
+except Exception:   # noqa: BLE001
+    crypto = None
 
 
-def list_messages(group_id: str, limit=50) -> dict:
+def _decrypt_in_place(r: dict) -> dict:
+    """Giải mã content các tin TEXT (nếu có key). Không có key/không mã hoá → giữ nguyên."""
+    if not crypto or not isinstance(r, dict):
+        return r
+    for bucket in ("regulars", "pins"):
+        for m in r.get(bucket) or []:
+            if m.get("type") == "TEXT" and m.get("content"):
+                m["content"] = crypto.decrypt_if_needed(m["content"])
+    return r
+
+
+def list_messages(group_id: str, limit=50, decrypt=True) -> dict:
     r = client.api_get(f"/message-query/group/{group_id}/message", {"limit": limit})
     client.check_error(r, "list_messages")
-    return r
+    return _decrypt_in_place(r) if decrypt else r
 
 
 def list_scheduled(group_id: str) -> dict:
@@ -74,8 +89,10 @@ if __name__ == "__main__":
         p = argparse.ArgumentParser(prog="messages.py list")
         p.add_argument("group_id")
         p.add_argument("--limit", type=int, default=50)
+        p.add_argument("--no-decrypt", dest="decrypt", action="store_false",
+                       help="giữ ciphertext, không tự giải mã E2E")
         a = p.parse_args(sys.argv[2:])
-        client.print_json(list_messages(a.group_id, a.limit))
+        client.print_json(list_messages(a.group_id, a.limit, a.decrypt))
     elif cmd == "scheduled":
         if len(sys.argv) < 3:
             print("usage: messages.py scheduled <group_id>", file=sys.stderr); sys.exit(1)

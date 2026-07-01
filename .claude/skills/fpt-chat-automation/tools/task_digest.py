@@ -4,17 +4,18 @@
 What it does
 ------------
 - Keeps a realtime WS connection (same transport as listen.py) and buffers every
-  READABLE incoming TEXT message (DMs + all groups), skipping your own messages,
-  non-TEXT, and E2E-encrypted bodies (those are ciphertext — content unreadable).
+  READABLE incoming TEXT message (DMs + all groups), skipping your own messages
+  and non-TEXT. E2E-encrypted bodies are DECRYPTED via crypto.py khi có private key
+  (work/secrets/fchat_private.pem); vắng key thì đếm-và-bỏ như cũ.
 - Every --interval minutes, asks `claude -p` to pull the action items addressed to
   YOU out of the batch, then:
     * appends a dated section to  temp/fchat_tasks/digest.md  (a running to-do list)
     * pushes a short summary of the NEW items to Telegram (remote-control bot)
 - It does NOT send anything back into any conversation. Pure read + notify.
 
-Hard limit (verified): FPT Chat messages are E2E-encrypted. Only plaintext /
-non-secure conversations are readable; secure groups arrive as ciphertext and are
-counted-but-skipped. The digest can only cover what is readable.
+Note: FPT Chat messages are E2E-encrypted (beatchat RSA-OAEP). Với private key có
+mặt, task_digest tự giải mã cả hội thoại secure; không có key thì chỉ phần plaintext
+đọc được (tin mã hoá bị đếm-và-bỏ). Xem crypto.py trong SKILL.md.
 
 Usage
 -----
@@ -42,6 +43,10 @@ import config
 import listen   # reuse _looks_encrypted (E2E detection)
 import tokens
 import ws_client
+try:
+    import crypto   # E2E decrypt (cần work/secrets/fchat_private.pem); vắng key → no-op
+except Exception:   # noqa: BLE001
+    crypto = None
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "..", ".."))
@@ -330,8 +335,10 @@ def _handle(obj, me, buf, seen):
     seen.add((gid, inc))
 
     content = data.get("content")
-    if listen._looks_encrypted(content) or not content:
-        buf.bump_encrypted()
+    if crypto and listen._looks_encrypted(content):
+        content = crypto.decrypt_if_needed(content)   # E2E → plaintext nếu có key
+    if not content or listen._looks_encrypted(content):
+        buf.bump_encrypted()                          # rỗng / vẫn ciphertext (không key) → bỏ
         return
     group = data.get("group") or {}
     item = {

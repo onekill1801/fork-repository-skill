@@ -44,6 +44,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import client          # noqa: E402  (fpt-chat)
 import config          # noqa: E402  (fpt-chat)
 import listen          # noqa: E402  (fpt-chat) — reuse _looks_encrypted/_fetch_history/WS bits
+try:
+    import crypto       # noqa: E402  E2E decrypt (vắng key → no-op)
+except Exception:       # noqa: BLE001
+    crypto = None
 import send            # noqa: E402  (fpt-chat)
 import tokens          # noqa: E402  (fpt-chat)
 import ws_client       # noqa: E402  (fpt-chat)
@@ -90,9 +94,9 @@ WATCH_SYS = (
     "mức độ issue 🔴 Critical · 🟡 Major · 🟢 Minor; bảng Standards Compliance dùng ✅/⚠️/❌ "
     "thay vì chữ pass/fail (GitLab nội bộ thường không ra internet nên KHÔNG dùng badge ảnh "
     "shields.io — sẽ vỡ).\n"
-    "3. BUILD/DEPLOY lên dev: đây là thao tác [WRITE] nhạy cảm — nó sẽ TỰ ĐỘNG bị "
-    "chặn chờ DUYỆT bằng nút bấm Telegram (đừng tự hỏi lại bằng văn xuôi). Sau khi "
-    "được duyệt, BẮT BUỘC bọc lệnh build bằng bg_notify.py (xem hướng dẫn dưới).\n"
+    "3. BUILD/DEPLOY lên dev: luồng này ĐÃ được người dùng chấp nhận → cứ chạy, "
+    "KHÔNG chờ duyệt và KHÔNG tự hỏi lại bằng văn xuôi. BẮT BUỘC bọc lệnh build bằng "
+    "bg_notify.py (build chạy lâu — xem hướng dẫn dưới) để kết quả tự báo về khi xong.\n"
     "4. Nhận xét ĐẦY ĐỦ nằm Ở TRÊN MR (bước 2). RIÊNG câu trả lời cuối cùng của lượt — "
     "phần sẽ đăng lại vào group chat FPT — phải NGẮN GỌN (2-4 dòng: verdict + vài ý chính "
     "+ link/MR), tiếng Việt, KHÔNG markdown (chat hiển thị plaintext). BẮT BUỘC kết thúc "
@@ -179,6 +183,11 @@ def _invoke_agent(text, history_block, gid, group_type, sender_id, sender_name):
     env = dict(os.environ)
     env["CLAUDE_TG_BRIDGE"] = "1"
     env["CLAUDE_TG_CHAT_ID"] = str(chat)
+    # Auto-duyệt CHO RIÊNG lượt group_watch: review (post comment) + build lên dev
+    # là thao tác đã được người dùng chấp nhận cho luồng này → không hỏi/chờ nút ở
+    # bot ops. Chỉ nới các nhóm read/file/bash; 'danger' vẫn luôn phải duyệt. Đè
+    # bằng FCHAT_WATCH_AUTO_APPROVE (vd để 'read' nếu muốn build hỏi lại).
+    env["CLAUDE_TG_AUTO_APPROVE"] = rccfg.get("FCHAT_WATCH_AUTO_APPROVE") or "read,file,bash"
     # Context để bg_notify.py báo kết quả build (chạy nền) VỀ FPT Chat + tag người
     # yêu cầu, thay vì chỉ về Telegram. Truyền qua env → kế thừa xuống tiến trình
     # bg_notify tách rời.
@@ -426,8 +435,10 @@ def _handle(obj, gid_target, me, kws, seen):
     seen.add(key)
 
     content = data.get("content")
-    if listen._looks_encrypted(content):
-        print(f"[{_now()}] [SKIP] tin mã hoá E2E — bỏ qua.")
+    if crypto and listen._looks_encrypted(content):
+        content = crypto.decrypt_if_needed(content)   # E2E → plaintext nếu có key
+    if listen._looks_encrypted(content):              # vẫn ciphertext (không key/lỗi) → bỏ
+        print(f"[{_now()}] [SKIP] tin mã hoá E2E (không giải được) — bỏ qua.")
         return
 
     # Tin của CHÍNH chủ tài khoản: chỉ xử lý khi có TIỀN TỐ lệnh (vd "@bot review

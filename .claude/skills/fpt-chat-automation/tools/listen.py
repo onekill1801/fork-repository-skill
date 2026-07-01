@@ -35,6 +35,10 @@ import client
 import config
 import tokens
 import ws_client
+try:
+    import crypto   # E2E decrypt (cần work/secrets/fchat_private.pem); vắng key → no-op
+except Exception:   # noqa: BLE001
+    crypto = None
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "..", ".."))
@@ -78,6 +82,8 @@ def _fetch_history(gid, me, limit=40):
         if not c:
             continue
         if _looks_encrypted(c):
+            c = crypto.decrypt_if_needed(c) if crypto else "<đã mã hoá>"
+        if _looks_encrypted(c):        # vẫn là ciphertext (không có key / lỗi)
             c = "<đã mã hoá>"
         elif len(c) > 400:
             c = c[:400] + "…"
@@ -155,6 +161,8 @@ def handle_message(obj, me, reply_mode, seen):
     sender_name = user.get("displayName") or sender
     gname = group.get("name") or gid
     content = data.get("content")
+    if crypto:                      # giải mã E2E nếu là ciphertext & có key
+        content = crypto.decrypt_if_needed(content)
 
     if not is_direct:
         print(f"[{_now()}] [GROUP] {gname} | {sender_name}: {content!r}  (chỉ đọc)")

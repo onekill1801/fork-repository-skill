@@ -49,7 +49,13 @@ def _auto_set() -> set:
     raw = cfg.get("TELEGRAM_AUTO_APPROVE")
     if raw == "":
         raw = DEFAULT_AUTO_APPROVE
-    return {p.strip().lower() for p in raw.split(",") if p.strip()}
+    cats = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    # Per-run override đặt bởi tiến trình spawn (vd group_watch cho review/build):
+    # NỚI thêm nhóm được tự duyệt CHỈ cho lượt agent đó, không đổi chính sách chung
+    # của bot CODE. 'danger' vẫn bị chặn ở nơi gọi (guard category != "danger").
+    per_run = os.environ.get("CLAUDE_TG_AUTO_APPROVE", "")
+    cats |= {p.strip().lower() for p in per_run.split(",") if p.strip()}
+    return cats
 
 
 def _out(decision: str, reason: str):

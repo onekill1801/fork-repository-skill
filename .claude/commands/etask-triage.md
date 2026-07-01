@@ -22,9 +22,10 @@ Tham số: `$ARGUMENTS` — một `task_id` cụ thể, hoặc rỗng = chọn t
      → gợi ý người/role phù hợp.
 5. **Hỏi duyệt** người dùng (đừng tự làm). Khi được duyệt:
    - EXECUTE → chạy `/auto-dev <task_id>` (full pipeline, có checkpoint của nó).
-   - ASSIGN → báo người đề xuất + lý do. ⚠️ API AI eTask **không có** tool gán
-     assignee-người (chỉ `assign_task_to_sprint`) → người dùng gán tay trong UI,
-     hoặc dùng `tasks.py assign-sprint <task> <sprint>` nếu chỉ cần gán sprint.
+   - ASSIGN → báo người đề xuất + lý do. Gán người tự động được: `tasks.py assign-users
+     <task> <userId> [--mode add]` (tool eTask `assign_task_users`); cần `etask_id` của người
+     trong `team.json`. Hoặc gán sprint: `tasks.py assign-sprint <task> <sprint>`.
+     Luồng đóng-task/giao-người đầy đủ (xác minh code) → dùng `/etask-resolve`.
 
 ## Ghi chú
 

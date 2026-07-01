@@ -17,6 +17,8 @@ Usage:
   python3 tasks.py move <task_id> <target_list_id>
   python3 tasks.py assign-sprint <task_id> <sprint_id>
   python3 tasks.py by-sprint <sprint_id>
+  python3 tasks.py assign-users <task_id> <user_id1,user_id2> [--mode add|replace]
+  python3 tasks.py unassign <task_id> [--users IDs] [--orgs CODES] [--groups IDs]
 """
 
 import argparse
@@ -127,6 +129,33 @@ def get_tasks_by_sprint(sprint_id: str) -> dict:
     return result
 
 
+def assign_task_users(task_id: str, user_ids: list, mode: str = "add") -> dict:
+    """Gán USER (người) cho task. mode 'add' (mặc định) chỉ thêm; 'replace' đồng bộ
+    đúng danh sách user_ids và XOÁ người khác (phá huỷ — confirm trước)."""
+    args = {"task_id": task_id, "user_ids": [int(u) for u in user_ids]}
+    if mode:
+        args["mode"] = mode
+    result = client.execute_tool("assign_task_users", args)
+    client.check_error(result, "assign_task_users")
+    return result
+
+
+def unassign_task(task_id: str, user_ids: list = None, org_ins: list = None,
+                  group_ids: list = None) -> dict:
+    """Gỡ assignee khỏi task (giữ owner/reviewer/coordinator). Truyền bất kỳ tổ hợp
+    user_ids / org_ins / group_ids."""
+    args = {"task_id": task_id}
+    if user_ids:
+        args["user_ids"] = [int(u) for u in user_ids]
+    if org_ins:
+        args["org_ins"] = list(org_ins)
+    if group_ids:
+        args["group_ids"] = [int(g) for g in group_ids]
+    result = client.execute_tool("unassign_task", args)
+    client.check_error(result, "unassign_task")
+    return result
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -229,6 +258,28 @@ if __name__ == "__main__":
         view.add_view_args(parser)
         args = parser.parse_args(sys.argv[2:])
         view.emit(get_tasks_by_sprint(args.sprint_id), args.format, view.parse_fields(args.fields))
+
+    elif cmd == "assign-users":
+        parser = argparse.ArgumentParser(prog="tasks.py assign-users")
+        parser.add_argument("task_id")
+        parser.add_argument("user_ids", help="Comma-separated eTask user IDs")
+        parser.add_argument("--mode", default="add", choices=["add", "replace"])
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(assign_task_users(args.task_id, args.user_ids.split(","), args.mode))
+
+    elif cmd == "unassign":
+        parser = argparse.ArgumentParser(prog="tasks.py unassign")
+        parser.add_argument("task_id")
+        parser.add_argument("--users", default=None, help="Comma-separated user IDs")
+        parser.add_argument("--orgs", default=None, help="Comma-separated org codes")
+        parser.add_argument("--groups", default=None, help="Comma-separated group IDs")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(unassign_task(
+            args.task_id,
+            args.users.split(",") if args.users else None,
+            args.orgs.split(",") if args.orgs else None,
+            args.groups.split(",") if args.groups else None,
+        ))
 
     else:
         print(f"Unknown command: {cmd}\n", file=sys.stderr)

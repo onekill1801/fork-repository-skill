@@ -37,6 +37,7 @@ source before first use to understand exact function signatures.
 | `tools/governed_search.py` | Safe DSL query (`governed_search`) — whitelisted entity/field/op, read-only |
 | `tools/auth.py` | PAT management (list/revoke — create requires session JWT) |
 | `tools/etask_watch.py` | **Triage watcher** — poll my-tasks → phân tích (claude -p) → đề xuất assign/execute → duyệt Telegram → mở auto-dev hoặc báo người. Slash: `/etask-triage` |
+| `tools/task_resolver.py` | **Resolver watcher** — poll my-tasks (mọi trạng thái CHƯA completed: todo/processing/approved) → xác minh trong code (`work/<project>`) đã fix chưa → FIXED: Hoàn thành/Chờ phê duyệt · NOT_FIXED: tôi tự làm / giao người + chỉnh estimate. Duyệt Telegram (nút bấm). Slash: `/etask-resolve` |
 
 ## Workflows
 
@@ -140,12 +141,19 @@ source before first use to understand exact function signatures.
 
 ### Workflow 6: Governed Search / Virtual model _(read-only, an toàn)_
 
-**Semantic layer**: 3 entity logic — `task` / `project` / `list_task` — field ánh xạ cột vật lý (sharded),
-server tự **route SQL↔ES**, inject tenant + ACL, tự điền field selectable (`projectName`/`creatorName`).
+**Semantic layer**: 4 entity logic — `task` / `project` / `list_task` / `sprint` — field ánh xạ cột vật lý
+(sharded), server tự **route SQL↔ES**, inject tenant + ACL, tự điền field selectable (`projectName`/`creatorName`).
 - `task`: id/status/priority/listTaskId/parentId/projectId (EQ/IN), name (CONTAINS), startDate/dueDate
   (GT/GTE/LT/LTE), `daysOverdue` (computed), `isMine`/`createdByMe` (EQ). `projectId` EQ → SQL 1-shard;
   cross-project (cần `isMine`/`createdByMe=true`) → ES.
-- `project`: id/name/code/status/startDate (chỉ project mình là member) · `list_task`: id/name/priority/dates/template.
+- `project`: id/name/code/status/startDate · `list_task`: id/name/priority/dates/template · `sprint`: id/name/projectId/status/dates.
+
+**Discovery (nạp vào prompt chatbot — đừng dò bằng lỗi):**
+```
+python3 governed_search.py list-entities            # entity + schemaVersion
+python3 governed_search.py describe --entity task   # field/ops/kind/selectable/sensitivity/relationships (persona-aware)
+```
+**Query:**
 ```
 python3 governed_search.py search --entity task --filter "isMine:EQ:true" --filter "daysOverdue:GTE:3"
 python3 governed_search.py search --entity project   --filter "name:CONTAINS:kpi"
@@ -161,6 +169,27 @@ fail-closed). Đọc khi: gặp `PERMISSION_DENIED`/`TOOL_RESTRICTED`/`GOVERNED_
 năng lực, hoặc lên kế hoạch thao tác WRITE/aggregate.
 → **`cookbook/ai-capabilities-governance.md`**
 
+### Workflow 8: Task Resolver — verify-in-code → close / hand off _(write — duyệt Telegram)_
+
+**Triggers:** "resolve task", "xử lý task được giao", "poller task", "task resolver",
+"kiểm task đã fix chưa", "đóng task hoặc giao người", "watch & resolve my tasks"
+
+Luồng poller xử-lý-task tự động cho **task giao cho tôi ở MỌI trạng thái CHƯA `completed`**
+(todo/processing/approved — loại completed/closed/cancelled). Hẹp lại bằng `ETASK_RESOLVE_STATUS_TYPES`.
+1. Đọc `cookbook/task-resolve.md` TRƯỚC (chi tiết quyết định + giả định cần confirm).
+2. Poll: `python task_resolver.py` (baseline lần đầu). Xử lý cả **backlog đang có**: `--resolve-existing`.
+3. Mỗi task mới/đổi trạng thái → spawn `claude -p` (CHỈ ĐỌC) xác minh trong `work/<project>` đã fix chưa.
+4. **FIXED** → thẻ Telegram: `✅ Hoàn thành` (complete_task) | `🕓 Chờ phê duyệt` (update status).
+   Tín hiệu đã-validate: `percent==1.0` hoặc `statusType ∈ {approved, completed}`.
+5. **NOT_FIXED** → thẻ: `👤 Tôi tự làm` (giữ tôi + chỉnh estimate + comment) | `➡️ Giao người khác`
+   → thẻ tiếp `✅ Giao <tên>` (`assign_task_users` + comment + estimate) | `❌ Bỏ qua`.
+6. Chống trùng: STATE `temp/etask_resolved.json` khoá (task→statusType + assigned_to); `_inflight`
+   chống bốc lại; kiểm assignee hiện có trước khi gán.
+
+> Cần bridge Telegram (ops/approval bot) đang chạy để nhận nút bấm. Một lần: `--task <id>`.
+> ⚠️ `update_task(status=)` nhận **status-ID theo từng list** (không phải keyword) — tool tự tra qua
+> `search_tasks(..., status_type=)`; assignee đọc từ `assignTaskList` của record search (get_task không trả).
+
 ## Routing Rules
 
 | User says... | Workflow | Cookbook |
@@ -174,6 +203,7 @@ năng lực, hoặc lên kế hoạch thao tác WRITE/aggregate.
 | "create project/sprint/list" / "start/complete sprint" | Workflow 4 (write) | `cookbook/ai-capabilities-governance.md` |
 | "what can you do with etask" / "permission denied" / "governance" / "Claude làm được gì" | Workflow 7 | `cookbook/ai-capabilities-governance.md` |
 | "statistics" / "task stats" / "overdue" / "thống kê" | Workflow 5 | `cookbook/analytics-reporting.md` |
+| "resolve task" / "xử lý task được giao" / "poller task" / "task đã fix chưa" | Workflow 8 | `cookbook/task-resolve.md` |
 
 ## Slash Commands
 
@@ -183,6 +213,7 @@ năng lực, hoặc lên kế hoạch thao tác WRITE/aggregate.
 | `/etask-create <name> [list_id]` | Workflow 2 – Create Task |
 | `/etask-projects` | Workflow 4 – Project Navigation |
 | `/etask-stats [scope]` | Workflow 5 – Analytics |
+| `/etask-resolve [task_id]` | Workflow 8 – Task Resolver |
 
 Run Python from `tools/` — `python3` on Linux/macOS, `python` on Windows if `python3` unavailable.
 
