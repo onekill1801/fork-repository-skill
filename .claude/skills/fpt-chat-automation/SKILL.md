@@ -222,10 +222,21 @@ lại bất kỳ tin nào:
   dạng checkbox, có người nhờ + deadline + độ ưu tiên) và **đẩy tóm tắt việc MỚI sang
   Telegram** (bot của skill remote-control).
 - Log thô mọi tin đọc được vào `temp/fchat_tasks/inbox.jsonl` (bền qua restart).
-- **Tuỳ chọn tạo task trên eTask** (`--etask`): mỗi việc trích được → 1 task trên eTask
-  (shell ra `etask-automation/tasks.py create`), tên = việc, ưu tiên map `cao→HIGH ·
-  vừa→MEDIUM · thấp→LOW`, nguồn + deadline nhét vào mô tả. Cần list đích: `--etask-list
-  <ID>` hoặc env `FCHAT_DIGEST_ETASK_LIST`. Không bật `--etask` → chỉ digest.md như cũ.
+- **Tuỳ chọn tạo task trên eTask** (`--etask`) — **CÓ DUYỆT, không tự tạo**: mỗi lần
+  flush, gửi **MỖI việc MỘT thẻ duyệt riêng (nút ✅ Duyệt / ❌ Từ chối) qua Telegram**;
+  việc nào bạn bấm **Duyệt** thì tạo NGAY task đó (shell ra
+  `etask-automation/tasks.py create`), việc bị **Từ chối / hết giờ** chỉ bỏ riêng việc
+  đó — không ảnh hưởng việc khác. Tên = việc, ưu tiên map `cao→HIGH · vừa→MEDIUM ·
+  thấp→LOW`, nguồn + deadline nhét vào mô tả. **Fail-safe:** không có bridge / chưa cấu
+  hình chat duyệt → **bỏ qua, KHÔNG tạo**. Cần list đích: `--etask-list
+  <ID>` hoặc env `FCHAT_DIGEST_ETASK_LIST`. Cơ chế duyệt dùng chung store
+  `temp/tg_approvals/` với hook — **cần bridge remote-control đang chạy** để xử lý nút bấm
+  (`TELEGRAM_APPROVAL_BOT`/`TELEGRAM_OPS_BOT`, `TELEGRAM_APPROVAL_CHAT`). **Thời gian chờ
+  bấm duyệt** dùng `FCHAT_DIGEST_APPROVAL_TIMEOUT` (giây; rỗng = theo
+  `TELEGRAM_APPROVAL_TIMEOUT` = 300s) — vd `86400` = 24h mới auto-huỷ. Việc chờ duyệt do
+  **một worker nền duy nhất** poll (số thread cố định = 1 dù nhiều thẻ chờ song song),
+  nên **không chặn** luồng đọc tin nhắn lẫn luồng trích lô mới. Đổi giá trị phải
+  **restart** `task_digest.py`. Không bật `--etask` → chỉ digest.md như cũ.
 - **Bỏ qua tin từ nhóm tên "New Group"** (không buffer, không trích).
 
 > ⚠️ **Giới hạn cứng:** chỉ trích được việc từ hội thoại **non-secure (plaintext)**.

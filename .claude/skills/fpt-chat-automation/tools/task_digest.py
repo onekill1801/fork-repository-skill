@@ -23,12 +23,20 @@ Usage
   python task_digest.py --interval 5         # flush every 5 minutes
   python task_digest.py --no-telegram        # write digest.md only, no push
   python task_digest.py --etask --etask-list 12345
-                                             # ALSO create a task on eTask per item
-                                             # (list from --etask-list or env
-                                             #  FCHAT_DIGEST_ETASK_LIST)
+                                             # per flush, send ONE Telegram approve
+                                             # card PER extracted item; each ✅ approve
+                                             # creates just that task, ❌/timeout skips
+                                             # only that one (list from --etask-list or
+                                             # env FCHAT_DIGEST_ETASK_LIST). Wait window
+                                             # = FCHAT_DIGEST_APPROVAL_TIMEOUT (def 300s).
+                                             # Never auto-creates: no bridge / no
+                                             # approval / deny / timeout → skipped.
   python task_digest.py --test "anh review giúp MR 412 trước trưa nay nhé"
                                              # one-shot: run extraction on this text,
                                              # print result, no WS / no side effects
+  python task_digest.py --as-name "Chung Tran Van" --test "@Chung Tran Van anh build à"
+                                             # simulate the account owner's name so
+                                             # @-mentions / direct questions register
 
 Messages from groups named "New Group" are ignored (never buffered).
 Stop with Ctrl+C (a final flush runs on exit).
@@ -80,6 +88,14 @@ try:
     import tg_api  # noqa: E402
 except Exception:
     tg_api = None
+try:
+    import approvals  # noqa: E402  (file-backed approve/deny store; needs bridge daemon)
+except Exception:
+    approvals = None
+try:
+    import rc_config  # noqa: E402  (approval chat/timeout config from remote-control)
+except Exception:
+    rc_config = None
 try:
     import telegram_bridge as tb  # noqa: E402  (account home + claude-bin helpers)
 except Exception:
@@ -133,19 +149,33 @@ def _persist(item):
 
 # ----------------------------- extraction -----------------------------------
 
-def _build_prompt(items):
-    """Turn a batch of messages into an extraction prompt for `claude -p`."""
+def _build_prompt(items, owner_name=""):
+    """Turn a batch of messages into an extraction prompt for `claude -p`.
+
+    owner_name (chủ tài khoản) is injected so the model can recognise messages
+    that @-mention or address the account owner — otherwise a mention like
+    "@Chung Tran Van" is just an anonymous name and gets filtered as chit-chat."""
     lines = []
     for it in items:
         where = "DM" if it["is_direct"] else f"Nhóm {it['gname']}"
         lines.append(f"[{_hm(it['ts'])}] ({where}) {it['sender_name']}: {it['content']}")
     transcript = "\n".join(lines)
+    who = (f'Chủ tài khoản (NGƯỜI NHẬN) tên là: "{owner_name}". '
+           "Mọi tin @nhắc tên này, hỏi trực tiếp, hay nhờ vả người này đều là "
+           "tin GỬI TỚI CHỦ TÀI KHOẢN.\n" if owner_name else "")
     return (
         "Bạn là trợ lý lọc CÔNG VIỆC từ tin nhắn chat công ty (FPT Chat).\n"
-        "Dưới đây là các tin nhắn mới gửi tới CHỦ TÀI KHOẢN (DM và nhóm).\n"
-        "Hãy rút ra CHỈ những việc mà chủ tài khoản CẦN LÀM / được giao / được nhờ "
-        "(yêu cầu, deadline, nhắc việc, câu hỏi cần trả lời). BỎ QUA chuyện phiếm, "
-        "thông báo không cần hành động, tin của người khác nói với nhau.\n\n"
+        + who +
+        "Dưới đây là các tin nhắn mới trong DM và nhóm.\n"
+        "Hãy rút ra những việc mà chủ tài khoản CẦN LÀM / được giao / được nhờ / "
+        "cần phản hồi:\n"
+        "- yêu cầu, deadline, nhắc việc;\n"
+        "- CÂU HỎI hỏi trực tiếp chủ tài khoản (kể cả ngắn/mơ hồ như \"anh build à\", "
+        "\"xong chưa\") → việc là TRẢ LỜI / LÀM RÕ cho người hỏi;\n"
+        "- tin @nhắc tên chủ tài khoản kèm yêu cầu/câu hỏi.\n"
+        "GỘP các tin liên tiếp của cùng một người thành MỘT ý trước khi xét. "
+        "BỎ QUA chuyện phiếm thuần, thông báo không cần hành động, và tin người khác "
+        "nói với nhau KHÔNG liên quan tới chủ tài khoản.\n\n"
         "Trả về DUY NHẤT một mảng JSON (không kèm giải thích, không markdown), mỗi phần tử:\n"
         '  {"task": "<việc cần làm, ngắn gọn>", '
         '"source": "<ai nhờ + ở đâu>", '
@@ -247,10 +277,10 @@ def _run_claude_once(prompt, model, home):
     return _parse_tasks(out), None, False
 
 
-def _extract(items):
+def _extract(items, owner_name=""):
     """Run `claude -p` over a batch under the work account; fall back to other
     accounts on auth/quota errors. Returns (tasks, error)."""
-    prompt = _build_prompt(items)
+    prompt = _build_prompt(items, owner_name)
     model = config.get("FCHAT_DIGEST_MODEL", "sonnet") or "sonnet"
     last_err = None
     for label, home in _claude_accounts():
@@ -314,6 +344,133 @@ def _telegram_summary(tasks):
             print(f"[{_now()}] [telegram] gửi {c} lỗi: {res.get('description')}", file=sys.stderr)
 
 
+def _approval_chat(bot):
+    """Resolve which Telegram chat to send the approval card to (mirror the
+    telegram_approve hook): explicit approval chat → approval bot's allowlist →
+    default allowlist. Returns "" if none configured."""
+    if rc_config is not None:
+        chat = rc_config.get("TELEGRAM_APPROVAL_CHAT")
+        if chat:
+            return chat
+    chat = (tg_api.allowed_chats(bot)[:1] or [""])[0]
+    return chat
+
+
+def _approval_timeout() -> int:
+    """Digest có timeout RIÊNG (FCHAT_DIGEST_APPROVAL_TIMEOUT) để chờ lâu (vd 24h =
+    86400) mà KHÔNG ảnh hưởng hook duyệt tương tác (dùng TELEGRAM_APPROVAL_TIMEOUT,
+    mặc định 300s). Thứ tự: digest-riêng → chung → 300."""
+    if rc_config is None:
+        return 300
+    raw = (rc_config.get("FCHAT_DIGEST_APPROVAL_TIMEOUT")
+           or rc_config.get("TELEGRAM_APPROVAL_TIMEOUT", "300") or "300")
+    try:
+        return int(raw)
+    except ValueError:
+        return 300
+
+
+def _send_task_card(t, list_id, bot, chat):
+    """Gửi MỘT thẻ duyệt cho MỘT việc. Trả req_id nếu gửi được, None nếu lỗi."""
+    line = (f"{_PRIO_ICON.get(t['priority'], '•')} {t['task']}"
+            + (f"  ⏰ {t['due']}" if t["due"] else ""))
+    detail = line + (f"\nNguồn: {t['source']}" if t["source"] else "")
+    req_id = approvals.create("etask_create", f"Tạo 1 task trên eTask (list {list_id})",
+                              detail, risk="write")
+    text = (
+        f"📥 <b>FPT Chat digest xin duyệt tạo 1 task trên eTask</b>\n"
+        f"<b>List đích:</b> <code>{list_id}</code>\n\n"
+        f"• {line}" + (f"\n<i>{t['source']}</i>" if t["source"] else "")
+    )
+    resp = tg_api.send_message(chat, text,
+                               reply_markup=tg_api.approve_keyboard(req_id), bot=bot)
+    if not resp.get("ok"):
+        print(f"[{_now()}] [etask] gửi thẻ duyệt lỗi: {resp.get('description')} — "
+              f"bỏ việc '{t['task'][:40]}…'.", file=sys.stderr)
+        return None
+    return req_id
+
+
+# ── Approval worker (MỘT thread nền duy nhất cho MỌI thẻ chờ duyệt) ──────────
+# flush() chỉ gửi thẻ + đăng ký vào _PENDING (nhanh, không block). Một worker duy
+# nhất poll tất cả thẻ đang chờ: approved → tạo task ngay; denied → bỏ; quá deadline
+# → auto-huỷ. Số thread cố định = 1 bất kể tải (thay vì mỗi lô một thread).
+_PENDING = {}                     # req_id -> {"task", "list_id", "deadline"}
+_PENDING_LOCK = threading.Lock()
+_WORKER_STARTED = False
+_WORKER_LOCK = threading.Lock()
+
+
+def _ensure_approval_worker():
+    global _WORKER_STARTED
+    with _WORKER_LOCK:
+        if _WORKER_STARTED:
+            return
+        _WORKER_STARTED = True
+    threading.Thread(target=_approval_worker, daemon=True,
+                     name="etask-approval-worker").start()
+
+
+def _approval_worker():
+    """Poll mọi thẻ đang chờ mỗi 2s. Chạy suốt đời tiến trình (daemon)."""
+    while True:
+        time.sleep(2)
+        with _PENDING_LOCK:
+            snapshot = list(_PENDING.items())
+        now = time.time()
+        for req_id, rec in snapshot:
+            status = (approvals.get(req_id) or {}).get("status")
+            done = None
+            if status == "approved":
+                _create_etask_tasks([rec["task"]], rec["list_id"])
+                done = "approved"
+            elif status == "denied":
+                print(f"[{_now()}] [etask] bị từ chối → bỏ '{rec['task']['task'][:40]}…'.")
+                done = "denied"
+            elif now >= rec["deadline"]:
+                approvals.decide(req_id, False, by="timeout")
+                print(f"[{_now()}] [etask] thẻ hết giờ → tự huỷ '{rec['task']['task'][:40]}…'.")
+                done = "timeout"
+            if done:
+                with _PENDING_LOCK:
+                    _PENDING.pop(req_id, None)
+
+
+def _approve_and_create_each(tasks, list_id):
+    """MỖI việc = MỘT thẻ duyệt riêng (nút ✅/❌). Chỉ GỬI thẻ + ĐĂNG KÝ vào _PENDING
+    rồi trả về ngay (không block); worker nền lo poll + tạo task khi được Duyệt.
+    Fail-safe: thiếu tg_api/approvals/chat → không tạo gì."""
+    if tg_api is None or approvals is None:
+        print(f"[{_now()}] [etask] thiếu module duyệt (tg_api/approvals) — "
+              f"BỎ tạo task (không tự tạo khi chưa duyệt).", file=sys.stderr)
+        return
+    bot = tg_api.approval_bot()
+    chat = _approval_chat(bot)
+    if not chat:
+        print(f"[{_now()}] [etask] chưa cấu hình chat duyệt "
+              f"(TELEGRAM_APPROVAL_CHAT / TELEGRAM_ALLOWED_CHATS) — BỎ tạo task.",
+              file=sys.stderr)
+        return
+
+    timeout = _approval_timeout()
+    deadline = time.time() + timeout
+    n = 0
+    for t in tasks:
+        req_id = _send_task_card(t, list_id, bot, chat)
+        if req_id:
+            with _PENDING_LOCK:
+                _PENDING[req_id] = {"task": t, "list_id": list_id, "deadline": deadline}
+            n += 1
+    if not n:
+        return
+    _ensure_approval_worker()
+    with _PENDING_LOCK:
+        total_pending = len(_PENDING)
+    print(f"[{_now()}] [etask] đã gửi {n} thẻ (mỗi việc 1 thẻ), chờ duyệt tối đa "
+          f"{timeout}s ≈ {timeout // 3600}h{(timeout % 3600) // 60:02d}m — "
+          f"worker nền đang theo dõi {total_pending} thẻ.")
+
+
 def _create_etask_tasks(tasks, list_id):
     """Create one eTask task per extracted item by shelling out to the
     etask-automation CLI (its own config/creds). Returns (created, failed)."""
@@ -360,7 +517,7 @@ def _create_etask_tasks(tasks, list_id):
     return created, failed
 
 
-def flush(buf, push_telegram, etask_list=None):
+def flush(buf, push_telegram, etask_list=None, owner_name=""):
     items, enc = buf.drain()
     if not items and not enc:
         return
@@ -368,7 +525,7 @@ def flush(buf, push_telegram, etask_list=None):
           + (f", {enc} tin mã hoá bỏ qua" if enc else "") + " → trích việc…")
     if not items:
         return
-    tasks, err = _extract(items)
+    tasks, err = _extract(items, owner_name)
     if err:
         buf.requeue(items)   # keep the batch for next cycle (transient quota/auth errors)
         print(f"[{_now()}] [extract] lỗi: {err}", file=sys.stderr)
@@ -379,10 +536,12 @@ def flush(buf, push_telegram, etask_list=None):
         return
     _write_digest(tasks, enc)
     print(f"[{_now()}] +{len(tasks)} việc → {DIGEST_MD}")
-    if etask_list:
-        _create_etask_tasks(tasks, etask_list)
     if push_telegram:
         _telegram_summary(tasks)
+    if etask_list:
+        # Chỉ gửi thẻ + đăng ký vào _PENDING rồi trả về ngay (không block flusher).
+        # MỘT worker nền duy nhất (_approval_worker) poll mọi thẻ + tạo task khi duyệt.
+        _approve_and_create_each(tasks, etask_list)
 
 
 # ----------------------------- WS loop --------------------------------------
@@ -428,10 +587,13 @@ def _handle(obj, me, buf, seen):
 
 
 def run(interval_min, push_telegram, etask_list=None):
-    me = client.api_get("/user/me").get("id")
+    meobj = client.api_get("/user/me") or {}
+    me = meobj.get("id")
     if not me:
         print("[ERROR] không lấy được user hiện tại (token sai?)", file=sys.stderr)
         sys.exit(1)
+    owner_name = (meobj.get("displayName") or meobj.get("fullName")
+                  or meobj.get("name") or "")
     buf = Buffer()
     seen = set()
     stop = threading.Event()
@@ -439,7 +601,7 @@ def run(interval_min, push_telegram, etask_list=None):
     def _flusher():
         while not stop.wait(interval_min * 60):
             try:
-                flush(buf, push_telegram, etask_list)
+                flush(buf, push_telegram, etask_list, owner_name)
             except Exception as e:  # noqa: BLE001 - keep the bridge alive
                 print(f"[{_now()}] [flusher] lỗi: {e}", file=sys.stderr)
 
@@ -490,7 +652,7 @@ def run(interval_min, push_telegram, etask_list=None):
     except KeyboardInterrupt:
         print(f"\n[{_now()}] dừng — flush lần cuối…")
         stop.set()
-        flush(buf, push_telegram, etask_list)
+        flush(buf, push_telegram, etask_list, owner_name)
 
 
 # ----------------------------- entry ----------------------------------------
@@ -500,11 +662,14 @@ if __name__ == "__main__":
     p.add_argument("--interval", type=int, default=10, help="phút giữa các lần trích (mặc định 10)")
     p.add_argument("--no-telegram", action="store_true", help="chỉ ghi digest.md, không push Telegram")
     p.add_argument("--etask", action="store_true",
-                   help="ngoài digest.md, tạo task trên eTask cho mỗi việc trích được "
-                        "(cần --etask-list hoặc FCHAT_DIGEST_ETASK_LIST)")
+                   help="ngoài digest.md, HỎI DUYỆT qua Telegram rồi mới tạo task trên "
+                        "eTask cho mỗi việc (cần --etask-list hoặc FCHAT_DIGEST_ETASK_LIST; "
+                        "cần bridge Telegram đang chạy để bấm nút duyệt)")
     p.add_argument("--etask-list", metavar="LIST_ID", default=None,
                    help="list_task_id đích trên eTask (mặc định: env FCHAT_DIGEST_ETASK_LIST)")
     p.add_argument("--test", metavar="TEXT", help="chạy thử trích việc trên 1 câu, in ra, không WS/không side-effect")
+    p.add_argument("--as-name", metavar="NAME", default="",
+                   help="(chỉ cho --test) giả lập tên chủ tài khoản để thử nhận diện @nhắc/câu hỏi")
     a = p.parse_args()
 
     missing = config.validate()
@@ -516,7 +681,7 @@ if __name__ == "__main__":
         sample = [{"ts": int(time.time()), "gid": "test", "gname": "Test",
                    "is_direct": True, "inc": 0, "sender": "x",
                    "sender_name": "Người test", "content": a.test}]
-        tasks, err = _extract(sample)
+        tasks, err = _extract(sample, a.as_name)
         if err:
             print(f"[extract] lỗi: {err}", file=sys.stderr)
             sys.exit(1)

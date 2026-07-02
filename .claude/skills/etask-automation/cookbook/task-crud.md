@@ -14,6 +14,18 @@ destructive actions with the user before executing.
 - **Status change to DONE/CANCELLED** — show current status, ask user to confirm
 - **Bulk operations** — cap at 20 per agent turn; warn user if more needed
 
+## Priority (thang 1–4)
+eTask lưu priority dạng **số 1–4**. Tool nhận cả số lẫn nhãn EN/VI rồi tự map:
+
+| Số | Nghĩa (VI) | Nhãn EN |
+|---|---|---|
+| `1` | Khẩn cấp | `URGENT` |
+| `2` | Cao | `HIGH` |
+| `3` | Trung bình | `MEDIUM` |
+| `4` | Thấp | `LOW` |
+
+`--priority 1` ≡ `--priority URGENT` ≡ `--priority "Khẩn cấp"`. Số càng nhỏ → càng gấp.
+
 ## Steps
 
 ### 1. Discover available lists (if list ID unknown)
@@ -28,7 +40,7 @@ python3 projects.py lists <workspace_id>
 ```bash
 python3 tasks.py create --name "Fix login timeout" --list <list_task_id>
 python3 tasks.py create --name "API Integration" --list <list_id> \
-    --priority HIGH --due 2026-06-30T17:00:00Z --desc "Integrate payment gateway"
+    --priority 2 --due 2026-06-30T17:00:00Z --desc "Integrate payment gateway"   # 2 = Cao
 ```
 
 ### 3. Create a subtask
@@ -45,7 +57,7 @@ python3 tasks.py update <task_id> --name "New Title"
 python3 tasks.py update <task_id> --status IN_PROGRESS
 
 # Update multiple fields
-python3 tasks.py update <task_id> --priority URGENT --due 2026-06-01T09:00:00Z
+python3 tasks.py update <task_id> --priority 1 --due 2026-06-01T09:00:00Z    # 1 = Khẩn cấp
 
 # Update description
 python3 tasks.py update <task_id> --desc "Updated acceptance criteria: ..."

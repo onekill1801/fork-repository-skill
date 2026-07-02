@@ -8,10 +8,13 @@ Usage:
   python3 tasks.py query <list_task_id> [--status STATUS] [--parent PARENT_ID]
   python3 tasks.py subtasks <parent_task_id>
   python3 tasks.py create --name NAME --list LIST_ID [--parent PARENT_ID]
-                          [--desc DESC] [--priority LOW|MEDIUM|HIGH|URGENT]
+                          [--desc DESC] [--priority 1|2|3|4]
                           [--start ISO_DATE] [--due ISO_DATE]
   python3 tasks.py update <task_id> [--name X] [--desc X] [--status X]
-                          [--priority X] [--start ISO] [--due ISO]
+                          [--priority 1|2|3|4] [--start ISO] [--due ISO]
+
+  Priority: 1=Khẩn cấp · 2=Cao · 3=Trung bình · 4=Thấp
+  (cũng nhận nhãn LOW/MEDIUM/HIGH/URGENT — tự map sang số).
   python3 tasks.py complete <task_id>
   python3 tasks.py delete <task_id>
   python3 tasks.py move <task_id> <target_list_id>
@@ -27,6 +30,33 @@ import sys
 import client
 import config
 import view
+
+
+# ── Priority ─────────────────────────────────────────────────────────────────
+# eTask lưu priority dạng SỐ 1–4. Map cả nhãn EN/VI về số để người dùng nhập kiểu
+# nào cũng được (số 1-4, LOW/MEDIUM/HIGH/URGENT, hoặc Khẩn cấp/Cao/Trung bình/Thấp).
+#   1 = Khẩn cấp (Urgent) · 2 = Cao (High) · 3 = Trung bình (Medium) · 4 = Thấp (Low)
+PRIORITY_MAP = {
+    "1": 1, "URGENT": 1, "KHẨN CẤP": 1, "KHAN CAP": 1,
+    "2": 2, "HIGH": 2, "CAO": 2,
+    "3": 3, "MEDIUM": 3, "TRUNG BÌNH": 3, "TRUNG BINH": 3,
+    "4": 4, "LOW": 4, "THẤP": 4, "THAP": 4,
+}
+PRIORITY_CHOICES = ["1", "2", "3", "4", "LOW", "MEDIUM", "HIGH", "URGENT"]
+
+
+def normalize_priority(value) -> str:
+    """Chuyển nhãn/số priority của người dùng về CHUỖI số "1"–"4" mà eTask yêu cầu.
+
+    eTask API mong priority là chuỗi ("1".."4"); gửi int gây lỗi phía server
+    `java.lang.Integer cannot be cast to java.lang.String`. Vì vậy luôn trả str."""
+    key = str(value).strip().upper()
+    if key not in PRIORITY_MAP:
+        raise ValueError(
+            f"priority không hợp lệ: {value!r}. Dùng 1-4 hoặc "
+            "LOW/MEDIUM/HIGH/URGENT (1=Khẩn cấp, 2=Cao, 3=Trung bình, 4=Thấp)."
+        )
+    return str(PRIORITY_MAP[key])
 
 
 # ── Tool wrappers ──────────────────────────────────────────────────────────────
@@ -68,7 +98,7 @@ def create_task(name: str, list_task_id: str, parent_id: str = None,
     if description:
         args["description"] = description
     if priority:
-        args["priority"] = priority.upper()
+        args["priority"] = normalize_priority(priority)
     if start_date:
         args["start_date"] = start_date
     if due_date:
@@ -89,7 +119,7 @@ def update_task(task_id: str, name: str = None, description: str = None,
     if status is not None:
         args["status"] = status
     if priority is not None:
-        args["priority"] = priority.upper()
+        args["priority"] = normalize_priority(priority)
     if start_date is not None:
         args["start_date"] = start_date
     if due_date is not None:
@@ -202,7 +232,8 @@ if __name__ == "__main__":
         parser.add_argument("--list", dest="list_id", required=True)
         parser.add_argument("--parent", default=None)
         parser.add_argument("--desc", default=None)
-        parser.add_argument("--priority", default=None, choices=["LOW", "MEDIUM", "HIGH", "URGENT"])
+        parser.add_argument("--priority", default=None, choices=PRIORITY_CHOICES,
+                            help="1=Khẩn cấp, 2=Cao, 3=Trung bình, 4=Thấp (hoặc LOW/MEDIUM/HIGH/URGENT)")
         parser.add_argument("--start", default=None)
         parser.add_argument("--due", default=None)
         args = parser.parse_args(sys.argv[2:])
@@ -217,7 +248,8 @@ if __name__ == "__main__":
         parser.add_argument("--name", default=None)
         parser.add_argument("--desc", default=None)
         parser.add_argument("--status", default=None)
-        parser.add_argument("--priority", default=None)
+        parser.add_argument("--priority", default=None, choices=PRIORITY_CHOICES,
+                            help="1=Khẩn cấp, 2=Cao, 3=Trung bình, 4=Thấp (hoặc LOW/MEDIUM/HIGH/URGENT)")
         parser.add_argument("--start", default=None)
         parser.add_argument("--due", default=None)
         args = parser.parse_args(sys.argv[2:])

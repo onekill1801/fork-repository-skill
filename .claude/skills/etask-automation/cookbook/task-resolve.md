@@ -78,14 +78,14 @@ Thẻ Telegram 2 nút: **`✅ Hoàn thành`** → `complete_task` · **`🕓 Ch�
   nhóm đích thì không tra được → tool degrade (bỏ qua đổi trạng thái, vẫn làm estimate/comment/assign + báo).
 
 ### 4b. NOT_FIXED — chưa fix
-Thẻ 1: **`👤 Tôi tự làm`** | **`➡️ Giao người khác`**.
-- **Tôi tự làm:** nếu đang `todo` → đổi sang `IN_PROGRESS` (`ETASK_RESOLVE_STATUS_INPROGRESS`),
-  chỉnh estimate (start = hôm nay, due = +N ngày theo `estimate_days`), thêm comment phân tích.
-  Assignee giữ nguyên là **tôi** (đúng ý "tôi nằm ở task để theo dõi").
-- **Giao người khác:** thẻ 2 **`✅ Giao <tên>`** | **`❌ Bỏ qua`**. Người gợi ý lấy từ
-  `team.py match --exclude <ETASK_MY_LOGIN>` → `team.py get` (đọc `etask_id`). Khi duyệt:
-  `assign_task_users(task, [userId], mode=add)` + comment thông tin bổ sung + chỉnh estimate.
-  - Thiếu `etask_id` của người đó → tool báo và **không** gán (bạn gán tay / bổ sung team.json).
+**MỘT menu** (N nút) để BẠN chọn đúng người: `👤 Tôi tự làm` · **mỗi thành viên team có `etask_id`**
+(⭐ = người AI gợi ý qua `team.py match`) · `❌ Bỏ qua`. Danh sách người lấy từ `work/team.json`
+(members có `handles.etask_user_id`, trừ `ETASK_MY_LOGIN`).
+- **Tôi tự làm:** nếu đang `todo` → đổi sang processing (`_resolve_status`), chỉnh estimate
+  (start=hôm nay, due=+N ngày theo `estimate_days`), ghi-chú phân tích. Assignee giữ là **tôi**.
+- **Chọn 1 người:** `assign_task_users(task, [userId], mode=add)` + ghi-chú bổ sung + chỉnh estimate.
+  Cảnh báo nếu task đã có assignee khác. (Menu N-way tái dùng cơ chế `appr:` — mỗi nút = 1 approval,
+  không cần sửa bridge.)
 
 > **Bổ sung thông tin → NỐI vào DESCRIPTION** (`_add_note` → `update_task(description=)`), thuần skill.
 > KHÔNG dùng comment: AI tool `create_comment` luôn set `commentIn` nên UI eTask ẩn comment — chỉ sửa

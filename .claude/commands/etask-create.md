@@ -18,5 +18,6 @@ Create a new task in eTask.
    - Run `python3 projects.py my-lists` (cd to `tools/` first)
    - Show available lists; ask user to pick one
 6. Ask user for optional fields: priority, due date, description
+   - **Priority** là số `1-4`: `1`=Khẩn cấp, `2`=Cao, `3`=Trung bình, `4`=Thấp (mặc định để trống nếu người dùng không nêu). Có thể nhập nhãn URGENT/HIGH/MEDIUM/LOW — tool tự map sang số.
 7. Run `python3 tasks.py create --name "..." --list <list_id> [optional flags]`
 8. Show created task ID and name; offer to add checklist items or comments

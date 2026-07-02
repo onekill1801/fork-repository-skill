@@ -131,7 +131,10 @@ def _my_tasks() -> list:
     kwargs = {"size": 100}
     if st:
         kwargs["status_type"] = st
-    r = search.search_my_assigned_tasks(**kwargs)
+    try:
+        r = search.search_my_assigned_tasks(**kwargs)
+    except SystemExit:      # check_error có thể sys.exit khi API lỗi (405/500 lúc backend restart)
+        return [{"error": True, "message": "eTask API lỗi (search) — backend có thể đang restart"}]
     if not isinstance(r, dict) or r.get("error"):
         return [{"error": True, "message": (r or {}).get("message", "lỗi my-tasks")}]
     data = ((r.get("content") or {}).get("data")) or []
@@ -309,6 +312,57 @@ def _binary_kb(req_id: str, yes_label: str, no_label: str) -> dict:
     ]]}
 
 
+def _pick(chat, body: str, options: list, task):
+    """Bộ chọn N-lựa-chọn qua Telegram, tái dùng cơ chế `appr:` — MỖI nút là MỘT approval riêng.
+    options = [(label, value), ...]. Người dùng bấm nút nào → approval đó 'approved' → trả value đó.
+    Trả None nếu hết giờ. Không phải sửa bridge (appr: đã được route ở cả 2 mode)."""
+    reqs = []  # (req_id, value)
+    buttons = []
+    for label, value in options:
+        rid = approvals.create("etask-resolve-pick", f"{label[:40]}", task["id"], "write")
+        reqs.append((rid, value))
+        buttons.append([{"text": label, "callback_data": f"appr:{rid}:yes"}])
+    resp = tg_api.send_message(chat, body, reply_markup={"inline_keyboard": buttons},
+                               bot=tg_api.approval_bot())
+    if not resp.get("ok"):
+        print(f"[{_now()}] [WARN] không gửi được menu chọn: {resp.get('description')}", file=sys.stderr)
+        return None
+    to = int(rccfg.get("TELEGRAM_APPROVAL_TIMEOUT", "300") or "300")
+    deadline = time.time() + max(to, 600)
+    chosen = None
+    while time.time() < deadline:
+        for rid, value in reqs:
+            if approvals.get(rid).get("status") == "approved":
+                chosen = value
+                break
+        if chosen is not None:
+            break
+        time.sleep(1.0)
+    for rid, _ in reqs:                       # đóng các option còn treo (tránh tap lạc về sau)
+        if approvals.get(rid).get("status") == "pending":
+            approvals.decide(rid, False, by="auto-close")
+    return chosen
+
+
+def _team_candidates() -> list:
+    """[(name, etask_id)] các thành viên team có etask_id (ngoài tôi), để chọn giao việc."""
+    path = os.path.join(REPO_ROOT, "work", "team.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    me = _my_login()
+    out = []
+    for key, rec in (data.items() if isinstance(data, dict) else []):
+        if key == me:
+            continue
+        uid = (rec.get("handles") or {}).get("etask_user_id")
+        if uid:
+            out.append((rec.get("name") or key, uid))
+    return out
+
+
 def _ask(chat, body: str, yes_label: str, no_label: str, task) -> str:
     """Gửi 1 thẻ nhị phân, chờ duyệt. Trả 'yes' | 'no' | 'timeout'."""
     req_id = approvals.create("etask-resolve", f"{task['name'][:60]}", task["id"], "write")
@@ -399,7 +453,7 @@ def _handle_fixed(task, chat, v):
         try:
             task_api.complete_task(task["id"])
         except SystemExit:
-            _notify(chat, "⚠️ complete_task lỗi — xem log máy chủ."); return
+            _notify(chat, "⚠️ complete_task lỗi (backend?) — sẽ thử lại vòng sau."); return "retry"
         after = _db_status(task["id"])
         ok = after and after != before
         _log(f"[ACTION] {task['id']} complete_task → status={after} ({'OK' if ok else 'CHƯA đổi'})")
@@ -416,7 +470,7 @@ def _handle_fixed(task, chat, v):
         try:
             task_api.update_task(task["id"], status=review)
         except SystemExit:
-            _notify(chat, f"⚠️ update_task(status={html.escape(str(review))}) lỗi — xem log máy chủ."); return
+            _notify(chat, f"⚠️ update_task(status={html.escape(str(review))}) lỗi (backend?) — thử lại vòng sau."); return "retry"
         after = _db_status(task["id"])
         ok = after == review
         _log(f"[ACTION] {task['id']} set approved={review} → DB status={after} ({'OK' if ok else 'CHƯA đổi'})")
@@ -427,16 +481,36 @@ def _handle_fixed(task, chat, v):
 
 
 def _handle_not_fixed(task, chat, v):
-    head = (f"🟠 <b>Task CHƯA fix</b>\n<b>{html.escape(task['name'])}</b>\n"
+    """Menu 1 bước: Tôi tự làm / <mỗi thành viên team> / Bỏ qua. Bạn CHỌN ĐÚNG người."""
+    cands = _team_candidates()            # [(name, uid)]
+    sugg = (v.get("assignee_name") or "").strip().lower()
+    options = [("👤 Tôi tự làm / theo dõi", "self")]
+    for name, uid in cands:
+        star = "⭐ " if sugg and sugg not in ("", "-") and (sugg in name.lower() or name.lower() in sugg) else ""
+        options.append((f"{star}➡️ {name}", ("assign", name, uid)))
+    options.append(("❌ Bỏ qua", "skip"))
+
+    body = (f"🟠 <b>Task CHƯA fix</b>\n<b>{html.escape(task['name'])}</b>\n"
             f"<i>{html.escape(task['project'])} · {task['statusType']}</i>\n"
-            f"Lý do: {html.escape(v['reason'][:300])}\n\nBạn xử lý thế nào?")
-    pick = _ask(chat, head, "👤 Tôi tự làm", "➡️ Giao người khác", task)
-    _log(f"[NOT_FIXED] {task['id']} → duyệt: {'Tôi tự làm' if pick=='yes' else ('Giao người khác' if pick=='no' else 'timeout')}")
-    if pick == "timeout":
-        _notify(chat, f"⏭️ Hết hạn duyệt — chưa xử lý task <b>{html.escape(task['name'][:60])}</b>.")
+            f"Lý do: {html.escape(v['reason'][:250])}\n"
+            + (f"AI gợi ý: <b>{html.escape(v.get('assignee_name'))}</b>\n"
+               if sugg and sugg != "-" else "")
+            + "\n<b>Giao cho ai?</b> (⭐ = AI gợi ý)")
+    if not cands:
+        body += "\n<i>(team.json chưa có ai có etask_id — chỉ chọn Tự làm/Bỏ qua)</i>"
+
+    pick = _pick(chat, body, options, task)
+    lbl = pick if isinstance(pick, str) else (pick[1] if pick else "timeout")
+    _log(f"[NOT_FIXED] {task['id']} → chọn: {lbl}")
+
+    if pick is None:
+        _notify(chat, f"⏭️ Hết hạn chọn — chưa xử lý <b>{html.escape(task['name'][:60])}</b>.")
+        return "skip"
+    if pick == "skip":
+        _notify(chat, f"⏭️ Bỏ qua <b>{html.escape(task['name'][:60])}</b>.")
         return "skip"
 
-    if pick == "yes":   # tôi tự làm / theo dõi
+    if pick == "self":                    # tôi tự làm / theo dõi
         if task["statusType"] == "todo":
             inprog = _resolve_status(task, "processing", "ETASK_RESOLVE_STATUS_INPROGRESS")
             if inprog:
@@ -445,44 +519,36 @@ def _handle_not_fixed(task, chat, v):
                 except SystemExit:
                     pass
         _set_estimate(task["id"], v.get("estimate_days"))
-        _add_note(task, f"Tôi (chungtv8) nhận xử lý task này. Phân tích: {v['reason']}")
-        _notify(chat, f"👤 OK — bạn giữ <b>{html.escape(task['name'][:60])}</b> để tự làm/theo dõi. "
-                      f"Đã chỉnh estimate + ghi chú.")
+        _add_note(task, f"Tôi ({_my_login()}) nhận xử lý task này. Phân tích: {v['reason']}")
+        _notify(chat, f"👤 Bạn giữ <b>{html.escape(task['name'][:60])}</b> để tự làm/theo dõi "
+                      f"(chỉnh estimate + ghi chú).")
         return "self"
 
-    # giao người khác
-    name = v.get("assignee_name", "-")
-    uid = v.get("assignee_etask_id", "-")
-    if not uid or uid == "-" or not str(uid).isdigit():
-        _notify(chat, f"➡️ Cần giao người nhưng THIẾU eTask userId của <b>{html.escape(name)}</b> "
-                      f"(bổ sung qua <code>team.py set {html.escape(name)} --etask-id &lt;id&gt;</code>). "
-                      f"Tạm để bạn gán tay trong UI.")
-        return "skip"
-    existing = _user_ids(task.get("assignTaskList"))
-    others = [i for i in existing if str(i) != str(uid)]
-    confirm = _ask(chat,
-                   f"➡️ Giao task <b>{html.escape(task['name'][:60])}</b> cho <b>{html.escape(name)}</b> "
-                   f"(userId <code>{html.escape(str(uid))}</code>)?"
-                   + (f"\n⚠️ Task hiện đã có assignee khác (userIds {others})." if others else ""),
-                   "✅ Giao", "❌ Bỏ qua", task)
-    if confirm != "yes":
-        _notify(chat, f"⏭️ Bỏ qua giao việc cho task <b>{html.escape(task['name'][:60])}</b>.")
-        return "skip"
+    # ("assign", name, uid) — giao đúng người bạn chọn
+    _, name, uid = pick
+    others = [i for i in _user_ids(task.get("assignTaskList")) if str(i) != str(uid)]
     try:
         task_api.assign_task_users(task["id"], [int(uid)], mode="add")
         _log(f"[ACTION] {task['id']} assign_task_users {name}({uid}) OK")
     except SystemExit:
-        _notify(chat, "⚠️ assign_task_users lỗi — xem log máy chủ.")
+        _notify(chat, f"⚠️ Giao cho {html.escape(name)} lỗi (backend?) — sẽ thử lại vòng sau.")
+        return "retry"
+    except ValueError:
+        _notify(chat, f"⚠️ userId của {html.escape(name)} không hợp lệ — bỏ qua.")
         return "skip"
     _set_estimate(task["id"], v.get("estimate_days"))
     _add_note(task, f"Giao cho {name}. Thông tin bổ sung từ phân tích: {v['reason']}")
-    _notify(chat, f"✅ Đã giao <b>{html.escape(task['name'][:60])}</b> cho <b>{html.escape(name)}</b> "
-                  f"(thêm comment + chỉnh estimate).")
+    _notify(chat, f"✅ Đã giao <b>{html.escape(task['name'][:60])}</b> cho <b>{html.escape(name)}</b>"
+                  + (f" ⚠️ (đã có assignee khác: {others})" if others else "")
+                  + " — chỉnh estimate + ghi chú.")
     return name
 
 
 def _handle_task(task, chat, state):
     with _busy:
+        assigned_to = _my_login()
+        outcome = "?"
+        mark = True   # đánh dấu đã-xử-lý (dedup theo id). Lỗi phân tích → KHÔNG đánh dấu (cho retry).
         try:
             _log(f"[RESOLVE] {task['id']} {task['name']!r} → xác minh code…")
             full, v = _analyze(task, chat)
@@ -490,38 +556,35 @@ def _handle_task(task, chat, state):
                 _log(f"[VERDICT] {task['id']} → LỖI phân tích: {full[:200]}")
                 _notify(chat, f"⚠️ Phân tích task <code>{html.escape(task['id'])}</code> lỗi:\n"
                               f"{html.escape(full[:500])}")
+                mark = False   # lỗi tạm thời → cho poll sau thử lại
                 return
             _log(f"[VERDICT] {task['id']} → {v['status']} | project={v.get('project')} "
                  f"| assignee={v.get('assignee_name')}({v.get('assignee_etask_id')}) "
                  f"| est={v.get('estimate_days')} | {v.get('reason','')[:120]}")
             summary = full.split("[[VERDICT]]")[0].strip()
             _notify(chat, f"🗂️ <b>{html.escape(task['name'])}</b>\n<pre>{html.escape(summary[:1200])}</pre>")
-            assigned = task["statusType"]
+            outcome = v["status"]
             if v["status"] == "fixed":
-                _handle_fixed(task, chat, v)
+                if _handle_fixed(task, chat, v) == "retry":
+                    mark = False          # ghi thất bại do backend → cho poll sau thử lại
             elif v["status"] == "not_fixed":
                 res = _handle_not_fixed(task, chat, v)
-                if isinstance(res, str) and res not in ("skip", "self"):
-                    state[task["id"]] = {"statusType": task["statusType"], "assigned_to": res}
-                    _save_state(state)
-                    return
+                if res == "retry":
+                    mark = False
+                elif isinstance(res, str) and res not in ("skip", "self"):
+                    assigned_to = res
             else:
                 _notify(chat, f"❓ Chưa rõ task <b>{html.escape(task['name'][:60])}</b> đã fix chưa "
                               f"(map project/đánh giá không chắc). Lý do: {html.escape(v['reason'][:200])}")
         finally:
-            # đánh dấu đã xử lý ở đúng trạng thái này (tránh lặp), trừ khi đã set ở nhánh giao việc
-            if not isinstance(state.get(task["id"]), dict):
-                state[task["id"]] = {"statusType": task["statusType"], "assigned_to": _my_login()}
+            # DEDUP theo task_id: đã xử lý là bỏ qua ở mọi vòng sau (kể cả khi ta đổi statusType) →
+            # chống re-read vô hạn. Muốn xử lý lại 1 task → xoá entry của nó trong state, hoặc chạy --task.
+            if mark:
+                state[task["id"]] = {"status": task["statusType"], "outcome": outcome,
+                                     "assigned_to": assigned_to}
                 _save_state(state)
             with _inflight_lock:
                 _inflight.discard(task["id"])
-
-
-def _seen_at(state, task) -> bool:
-    rec = state.get(task["id"])
-    if isinstance(rec, dict):
-        return rec.get("statusType") == task["statusType"]
-    return rec == task["statusType"]   # tương thích state cũ (string)
 
 
 def poll_once(chat, state, act, max_per_cycle, baseline=False):
@@ -535,16 +598,16 @@ def poll_once(chat, state, act, max_per_cycle, baseline=False):
             continue
         if t["statusType"] in TERMINAL_TYPES:
             continue
-        if _seen_at(state, t):
+        if t["id"] in state:            # DEDUP theo id: đã xử lý → bỏ qua (chống re-read)
             continue
         with _inflight_lock:
             if t["id"] in _inflight:
                 continue
         if baseline:
-            state[t["id"]] = {"statusType": t["statusType"], "assigned_to": _my_login()}
+            state[t["id"]] = {"status": t["statusType"], "outcome": "baseline",
+                              "assigned_to": _my_login()}
             continue
-        tag = "đổi trạng thái" if t["id"] in state else "mới"
-        print(f"[{_now()}] [task {tag}] {t['id']} {t['name']!r} ({t['statusType']})")
+        print(f"[{_now()}] [task mới] {t['id']} {t['name']!r} ({t['statusType']})")
         if not act:
             continue
         if launched >= max_per_cycle:
@@ -576,6 +639,8 @@ def run(interval, act, max_per_cycle, resolve_existing):
             poll_once(chat, state, act, max_per_cycle)
         except KeyboardInterrupt:
             print(f"\n[{_now()}] stopped."); return
+        except SystemExit as e:   # check_error sys.exit khi backend lỗi → KHÔNG được chết, chờ vòng sau
+            print(f"[{_now()}] poll bị API cắt (backend?): {e} — thử lại sau {interval}s", file=sys.stderr)
         except Exception as e:  # noqa: BLE001
             print(f"[{_now()}] poll error: {e}", file=sys.stderr)
         time.sleep(interval)

@@ -69,8 +69,9 @@ source before first use to understand exact function signatures.
 **Steps:**
 1. Read `cookbook/task-crud.md` for workflow details
 2. Discover list ID if unknown: `python3 projects.py my-lists`
-3. **Create:** `python3 tasks.py create --name "NAME" --list LIST_ID [--priority MEDIUM] [--due DATE]`
-4. **Update:** `python3 tasks.py update TASK_ID [--name X] [--status X] [--priority X]`
+3. **Create:** `python3 tasks.py create --name "NAME" --list LIST_ID [--priority 1-4] [--due DATE]`
+4. **Update:** `python3 tasks.py update TASK_ID [--name X] [--status X] [--priority 1-4]`
+   - **Priority** = số `1-4`: `1`=Khẩn cấp · `2`=Cao · `3`=Trung bình · `4`=Thấp (cũng nhận nhãn URGENT/HIGH/MEDIUM/LOW).
 5. **Complete:** `python3 tasks.py complete TASK_ID`
 6. **Move:** `python3 tasks.py move TASK_ID TARGET_LIST_ID`
 7. **Sprint:** `python3 tasks.py assign-sprint TASK_ID SPRINT_ID`
