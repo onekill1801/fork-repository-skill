@@ -61,6 +61,12 @@ try:
 except Exception:
     fork_terminal = None
 
+# dev-automation tools: shared daemon supervisor (backoff + fatal-stop + health log)
+_DEV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                        "..", "..", "dev-automation", "tools"))
+sys.path.insert(0, _DEV_DIR)
+import daemon_common  # noqa: E402
+
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = rccfg.repo_root()
 STATE = os.path.join(REPO_ROOT, "temp", "etask_triaged.json")
@@ -288,8 +294,8 @@ def _handle_task(task, chat, state):
 def poll_once(chat, state, act, max_per_cycle, baseline=False):
     tasks = _my_tasks()
     if tasks and tasks[0].get("error"):
-        print(f"[{_now()}] [ERROR] eTask: {tasks[0].get('message')}", file=sys.stderr)
-        return
+        # Let the supervisor classify: 401/403 -> stop+notify; network/5xx -> backoff.
+        daemon_common.guard(tasks[0], "eTask")
     done = _done_types()
     launched = 0
     for t in tasks:
@@ -326,16 +332,19 @@ def run(interval, act, max_per_cycle, triage_existing):
     print(f"[{_now()}] watching MY eTask tasks | account={label} | mỗi {interval}s | "
           f"tối đa {max_per_cycle} task/vòng | Ctrl+C để dừng")
     state = _load_state()
-    if not state and not triage_existing:
-        poll_once(chat, state, act, max_per_cycle, baseline=True)
-    while True:
-        try:
+    pending_baseline = not state and not triage_existing
+
+    def _poll():
+        nonlocal pending_baseline
+        if pending_baseline:
+            poll_once(chat, state, act, max_per_cycle, baseline=True)
+            pending_baseline = False
+        else:
             poll_once(chat, state, act, max_per_cycle)
-        except KeyboardInterrupt:
-            print(f"\n[{_now()}] stopped."); return
-        except Exception as e:  # noqa: BLE001
-            print(f"[{_now()}] poll error: {e}", file=sys.stderr)
-        time.sleep(interval)
+
+    # Supervised: backoff on network/5xx, stop + Telegram alert on 401/403 (PAT expired).
+    daemon_common.supervise(_poll, interval=interval, label="etask_watch",
+                            notify=lambda msg: _notify(chat, msg))
 
 
 if __name__ == "__main__":
@@ -367,7 +376,10 @@ if __name__ == "__main__":
         sys.exit(0)
     if a.once:
         chat = (tg_api.allowed_chats(tg_api.approval_bot()) or [""])[0]
-        poll_once(chat, _load_state(), a.act, a.max_per_cycle)
+        try:
+            poll_once(chat, _load_state(), a.act, a.max_per_cycle)
+        except daemon_common.DaemonError as e:
+            print(f"[ERROR] {e}", file=sys.stderr); sys.exit(1)
         # chờ các thread xử lý xong (duyệt) trước khi thoát
         for th in [t for t in threading.enumerate() if t is not threading.current_thread() and t.daemon]:
             th.join(timeout=int(rccfg.get("TELEGRAM_APPROVAL_TIMEOUT", "300") or "300") + 120)

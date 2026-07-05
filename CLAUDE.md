@@ -61,7 +61,10 @@ python gitlab_api.py merge-mr <iid> [--keep-source] [--squash]   # [WRITE] accep
 python gitlab_api.py whoami                         # user GitLab hiện tại
 python gitlab_api.py my-review-mrs [reviewer|assignee|both]   # MR gắn tên tôi (toàn project)
 python mr_watch.py [--who ...] [--interval 300] [--once] [--no-spawn]   # poll MR gắn tên tôi → tự mở Claude review (hỏi trước khi post)
+python daemon_common.py status   # tình trạng các daemon (last event: started/transient/fatal/recovered) từ temp/daemon_health.jsonl
+python status.py [--json] [--section daemons,runs,queue,approvals,feedback]   # BẢNG TRẠNG THÁI tổng hợp: daemon + pipeline run đang mở + queue + approval chờ + feedback stats
 python notifier.py started|mr-created|review-done|deploy-done|custom <id> ...   # [WRITE → người thật thấy]
+python feedback.py add|recall|list|search|stats --project <P> ...   # sổ học từ can thiệp người (recall bơm bài học cũ vào prompt run sau)
 ```
 
 ### etask-automation (`.claude/skills/etask-automation/tools/`)

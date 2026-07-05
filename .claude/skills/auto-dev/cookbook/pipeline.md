@@ -72,6 +72,15 @@ connection pool, memory leak, thiếu cache) và tối ưu hiệu năng trước
 Hết vòng mà chưa APPROVE → Moderator chốt với phần bất đồng còn lại. `--rounds 1` = hành vi 1-lượt cũ.
 JSON kết quả có `rounds_used` + `converged` để orchestrator biết debate đã hội tụ hay chạm trần vòng.
 
+**Recall bài học cũ (tuỳ chọn nhưng nên dùng):** trước khi debate, nạp các lần người dùng từng sửa
+plan tương tự để agent đừng lặp lại:
+```bash
+cd ../../dev-automation/tools
+python feedback.py recall --project <P> --stage plan --type <bugfix|feature> --query "<tiêu đề/mô tả>" \
+  | python -c "import sys,json;open(r'../../../../temp/runs/<RID>_corrections.xml','w',encoding='utf-8').write(json.load(sys.stdin)['block'])"
+# rồi thêm --corrections-file ../../../../temp/runs/<RID>_corrections.xml vào lệnh debate bên dưới.
+```
+
 ```bash
 cd ../../auto-dev/tools
 # Mặc định gọi CLI agent bản subscription → KHÔNG cần ANTHROPIC_API_KEY:
@@ -108,13 +117,32 @@ python ../../fork-terminal/tools/agent_parser.py tag approach --file ../../../..
 > Worktree của Agent phụ (fork ra qua `fork-terminal`) đọc CHÍNH `temp/runs/<task_id>_plan.xml`
 > này để lập trình — không cần truyền plan qua kênh khác.
 
+**Sinh kịch bản verify (chạy thật → soi output → soi DB) NGAY sau plan:**
+```bash
+python verify_gen.py run --run <RID> --plan ../../../../temp/runs/<task_id>_plan.xml \
+    --context-file ../../../../temp/runs/<RID>_scout.md --root "<clone_dir>" --backend claude
+# --root: tự bóc ENDPOINT BỊ ẢNH HƯỞNG từ controller trong <target_files> (sửa XxxService ->
+#   tự dò XxxController/XxxResource cùng tên) -> kịch bản PHẢI gọi đúng các API đó.
+# -> temp/runs/<RID>_verify.json (flow_check format; mỗi AC hành-vi/dữ-liệu = 1 step "ACn: ...")
+# JSON trả: touches_runtime · affected_endpoints · endpoints_untested (API bị ảnh hưởng mà
+#   kịch bản KHÔNG gọi -> soi lại) · acs_uncovered · needs_review (step agent đoán)
+```
+`touches_runtime=true` (đụng controller/service/repository/sql/migration) → **nâng gate verify
+thành BẮT BUỘC** — ở auto mode, Test không qua được nếu chưa chạy verify xanh:
+```bash
+cd ../../dev-automation/tools
+python run_log.py require <RID> verify        # gate verify bắt buộc trên stage test
+cd ../../auto-dev/tools
+```
+
 ```bash
 python run_log.py stage <RID> plan done
 ```
 
 ### ✋ Checkpoint `after_plan`
 Trình bày plan cho người dùng **dưới dạng Markdown sạch** (bỏ thẻ — thẻ chỉ dùng cho
-Agent↔Agent). Chờ duyệt. Khi được duyệt:
+Agent↔Agent) **KÈM kịch bản verify** (`<RID>_verify.json`: step nào chứng minh AC nào,
+mục `needs_review` phải được người xác nhận). Chờ duyệt. Khi được duyệt:
 ```bash
 python run_log.py checkpoint <RID> after_plan approved
 ```
@@ -187,7 +215,31 @@ python run_log.py advance <RID> test    # auto: chặn nếu test|lint chưa pas
 Khi chưa có registry, thay `--project <P>` bằng `--cwd <dir> --cmd "<lệnh test>"`
 (hoặc `--cwd <dir> --auto` để tự dò pom.xml/package.json/...).
 
-**Cổng integration/e2e** (khi task chạm DB/API/Kafka/Redis) — chi tiết: `cookbook/stack-verify.md`.
+**Cổng `verify` — chạy code thật, soi output + DB (BẮT BUỘC khi `touches_runtime`,
+đã `require` ở bước Plan).** Kịch bản đã sinh sẵn ở Plan (`<RID>_verify.json`) và đã
+được người duyệt. DB connection tự resolve: registry → thiếu thì đọc thẳng
+`application-<env>.yml` của app Spring (spring_config gap-fill, registry luôn thắng):
+
+```bash
+# 0) (nếu test local) chạy app lên — base_url/port lấy từ spring_config:
+python spring_config.py read --project <P> --env dev          # xem db + base_url app
+python local_app.py start --name <P> --project <P>            # lệnh chạy: --cmd > registry
+#   `app_run_cmd` trong projects.json = lệnh ĐÃ BIẾT chạy được app này trên máy này
+#   (vd etask: java + PropertiesLauncher vì mvn spring-boot:run chết error=206) > mvn default
+python local_app.py wait-health --name <P>
+# 1) đúng DB chưa (nhất là worktree đã isolate):
+python probe_db.py check-db --engine <mysql|postgres> --project <P> --env dev --expect-db "<db>"
+# 2) chạy kịch bản verify: gọi API thật -> assert response -> assert row trong DB:
+python flow_check.py --file ../../../temp/runs/<RID>_verify.json --project <P> --env dev > v.json
+python run_log.py record-gate <RID> verify --json v.json      # verdict suy từ passed
+# 3) dừng app local nếu có chạy:
+python local_app.py stop --name <P>
+```
+- `verify` đỏ → sửa code, chạy lại (cùng vòng 3-retry với cổng test). Ở `mode=auto`,
+  `advance <RID> test` sẽ **CHẶN** khi gate verify chưa pass (do đã `require`).
+- Kết quả `v.json` dùng tiếp ở Deliver: `ac-map --verify-json` (bằng chứng thật cho AC).
+
+**Cổng integration/e2e bổ sung** (Kafka/Redis/scenario tay) — chi tiết: `cookbook/stack-verify.md`.
 Chạy ở env **non-prod** (dev/uat/sandbox) qua `--project <P> --env <env>`:
 
 > **Trước probe DB trên worktree đã isolate:** `runtime_isolator` chỉ ĐỔI TÊN DB (`<db>_task_<id>`),
@@ -228,8 +280,11 @@ python run_log.py record-gate <RID> review --json r.json    # passed=false nếu
 ```
 - `blockers` → sửa hết rồi review lại (đừng tạo MR khi còn blocker). `warnings` → cân nhắc.
 
-**Đối chiếu acceptance criteria (gate `ac`, suy từ sổ AC):**
+**Đối chiếu acceptance criteria (gate `ac`, suy từ sổ AC):** AC dạng hành-vi/dữ-liệu
+map bằng **kết quả verify thật** (step "ACn: ..." phải PASS — step fail/thiếu là bị từ chối):
 ```bash
+python run_log.py ac-map <RID> AC1 --verify-json v.json    # bằng chứng = step 'AC1: ...' đã pass
+# AC ngoài phạm vi runtime (docs/refactor) mới dùng --evidence tay:
 python run_log.py ac-map <RID> AC1 --evidence "test ReportServiceTest / probe_api 200"
 # ... map từng AC tới bằng chứng; AC ngoài phạm vi: ac-waive <RID> ACx --note "..."
 ```
@@ -253,6 +308,28 @@ python notifier.py mr-created <task_id> "<mr_url>"
 python azure_devops.py state <task_id> Resolved
 python run_log.py advance <RID> deliver    # done iff gate review+ac đạt (auto chặn / checkpoint báo)
 ```
+
+## 6. Học từ can thiệp (feedback ledger)
+
+Mỗi lần con người **sửa / bác / override** đề xuất của agent = một bài học. Ghi lại thì lần sau
+agent bớt sai (recall ở mục 2 sẽ bơm lại vào prompt). Ghi ngay tại điểm can thiệp:
+
+```bash
+cd ../../dev-automation/tools
+# Người dùng sửa plan trước khi duyệt (mốc after_plan):
+python feedback.py add --project <P> --stage plan --run-id <RID> --task-type <t> --action edited \
+  --correction "<đã đổi gì so với plan agent>" --reason "<vì sao — trường quan trọng nhất>" \
+  --tags convention,wrong-file
+# Bác một approval: --action rejected ; đổi tier/mode so với triage: --stage triage --action overridden
+# Duyệt SẠCH (không sửa gì) cũng PHẢI ghi — 1 dòng, để stats có mẫu số đo tỉ lệ duyệt-thẳng:
+python feedback.py add --project <P> --stage plan --run-id <RID> --task-type <t> --action approved
+```
+- Ledger: `work/feedback/<P>.jsonl` (append-only, **gitignored** → máy-cụ-thể, tự backup/sync nếu
+  chạy nhiều máy).
+- Xem "càng chạy càng chính xác": `python feedback.py stats --project <P>`
+  (tỉ lệ duyệt-thẳng-không-sửa theo stage + phân bố tag lỗi).
+- Recall chỉ dùng `edited|rejected|overridden` (bài học); nhưng `approved` vẫn **bắt buộc ghi ở mỗi
+  mốc duyệt** — thiếu nó, `stats` không có mẫu số và tỉ lệ duyệt-thẳng luôn ≈ 0 (vô nghĩa).
 
 ## Resume
 

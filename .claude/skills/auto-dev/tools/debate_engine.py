@@ -556,6 +556,19 @@ def cmd_run(args) -> int:
     if not desc:
         raise DebateError("cần --desc \"...\" hoặc --desc-file <path> (mô tả task).")
 
+    # Recall: fold past human corrections (feedback.py recall → block) into the task the
+    # three roles see, so the debate stops repeating mistakes the human already fixed.
+    if args.corrections_file:
+        try:
+            with open(args.corrections_file, encoding="utf-8") as f:
+                corrections = f.read().strip()
+            if corrections:
+                desc = (f"{desc}\n\n"
+                        f"LƯU Ý — người dùng từng sửa các plan tương tự thế này; "
+                        f"ĐỪNG lặp lại:\n{corrections}")
+        except OSError:
+            pass  # non-fatal: recall is an optimisation, never blocks the debate
+
     narrator = Narrator(use_color=not args.no_color)
     backend = _make_backend(args)
     engine = DebateEngine(backend, narrator, max_rounds=args.rounds)
@@ -586,6 +599,8 @@ def main() -> int:
     p.add_argument("--task", required=True, help="task_id (dùng cho tên file spec)")
     p.add_argument("--desc", help="Mô tả task")
     p.add_argument("--desc-file", help="Đọc mô tả task từ file")
+    p.add_argument("--corrections-file", help="Khối <past_corrections> từ `feedback.py recall` "
+                                              "(chèn bài học cũ vào prompt tranh biện)")
     p.add_argument("--backend", default="claude",
                    choices=["claude", "cursor", "agy", "custom", "api", "dry-run"],
                    help="Nguồn agent (mặc định: claude CLI subscription, không cần API key)")

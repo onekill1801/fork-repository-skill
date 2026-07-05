@@ -92,20 +92,37 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _resolve_cmd(args, block: dict, cwd: str):
+    """Run-command precedence: --cmd flag > registry `app_run_cmd` > mvn default.
+
+    `app_run_cmd` in work/projects.json captures the ONE command known to boot this
+    app on this machine (e.g. etask needs jar + PropertiesLauncher: `mvn spring-boot:run`
+    dies with Windows error=206, and a system-scope lib is missing from the fat jar) —
+    so nobody has to rediscover it. Returns (cmd|None, source).
+    """
+    if args.cmd:
+        return args.cmd, "flag"
+    reg = (block or {}).get("app_run_cmd")
+    if reg:
+        return reg, "registry:app_run_cmd"
+    if os.path.isfile(os.path.join(cwd, "pom.xml")):
+        return "mvn -q spring-boot:run", "default:pom.xml"
+    return None, "none"
+
+
 def cmd_start(args) -> dict:
+    block = project_config.load(args.project) if args.project else {}
     cwd = args.cwd
     if not cwd and args.project:
-        cwd = project_config.load(args.project).get("clone_dir")
+        cwd = block.get("clone_dir")
     cwd = os.path.abspath(os.path.expanduser(cwd or os.getcwd()))
     if not os.path.isdir(cwd):
         return {"error": True, "message": f"cwd does not exist: {cwd}"}
 
-    cmd = args.cmd
+    cmd, cmd_source = _resolve_cmd(args, block, cwd)
     if not cmd:
-        if os.path.isfile(os.path.join(cwd, "pom.xml")):
-            cmd = "mvn -q spring-boot:run"
-        else:
-            return {"error": True, "message": "no --cmd given and no pom.xml to default from"}
+        return {"error": True,
+                "message": "no --cmd, no `app_run_cmd` in registry, and no pom.xml to default from"}
 
     existing = _load_state(args.name)
     if existing and _pid_alive(existing.get("pid", -1)):
@@ -130,7 +147,7 @@ def cmd_start(args) -> dict:
     proc = subprocess.Popen(cmd, **popen_kwargs)
     state = {"name": args.name, "pid": proc.pid, "cmd": cmd, "cwd": cwd, "log": log_path}
     _save_state(args.name, state)
-    return {"started": True, **state,
+    return {"started": True, **state, "cmd_source": cmd_source,
             "note": "detached; use wait-health then run your scenario, then 'stop'"}
 
 

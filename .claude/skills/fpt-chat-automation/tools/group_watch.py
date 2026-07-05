@@ -61,6 +61,20 @@ import rc_config as rccfg     # noqa: E402
 import telegram_bridge as tb  # noqa: E402  (reuse settings/account/claude-bin helpers)
 import tg_api                 # noqa: E402
 
+# dev-automation: shared health log so `daemon_common.py status` sees this watcher too.
+_DEV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                        "..", "..", "dev-automation", "tools"))
+sys.path.insert(0, _DEV_DIR)
+try:
+    import daemon_common  # noqa: E402
+except Exception:  # noqa: BLE001
+    daemon_common = None
+
+
+def _hlog(event, detail=""):
+    if daemon_common is not None:
+        daemon_common.health_log("group_watch", event, detail)
+
 # Prefilter rẻ: chỉ tin chứa MỘT trong các cụm này mới được đưa cho agent. Mục
 # đích là lọc bớt chuyện phiếm; agent vẫn là người quyết cuối (trả 'SKIP' nếu
 # tin không thực sự là yêu cầu). Đè bằng FCHAT_WATCH_KEYWORDS.
@@ -467,8 +481,10 @@ def _handle(obj, gid_target, me, kws, seen):
 def run(gid_target, idle_ping=20):
     me = client.api_get("/user/me").get("id")
     if not me:
+        _hlog("fatal", "cannot resolve current user (token bad?)")
         print("[ERROR] không xác định được user hiện tại (token hỏng?)", file=sys.stderr)
         sys.exit(1)
+    _hlog("started", f"group={gid_target}")
     kws = _keywords()
     label, _ = _primary_account()
     n_workers = _worker_count()
@@ -486,6 +502,7 @@ def run(gid_target, idle_ping=20):
                                      origin="https://chat.fpt.com", timeout=idle_ping,
                                      verify=config.verify_ssl())
             print(f"[{_now()}] connected.")
+            _hlog("recovered" if backoff > 2 else "connected")
             backoff = 2
             last_ping = time.time()
             while True:
@@ -514,6 +531,7 @@ def run(gid_target, idle_ping=20):
             print(f"\n[{_now()}] stopped.")
             return
         except Exception as e:  # noqa: BLE001
+            _hlog("transient", f"reconnect in {backoff}s — {e}")
             print(f"[{_now()}] lỗi kết nối: {e}; thử lại sau {backoff}s", file=sys.stderr)
             tokens.refresh(verbose=False)
             time.sleep(backoff)

@@ -8,6 +8,12 @@ Tất cả tool ở `.claude/skills/dev-automation/tools/`, chỉ dùng **stdlib
 Redis qua socket RESP, DB qua bọc CLI `psql`/`mysql`, Kafka qua REST Proxy). Config đọc từ
 `.env` (xem khối "Stack-verify toolkit" trong `.env.sample`). **Trỏ vào môi trường TEST**, đừng prod.
 
+> **DB config lấy từ đâu?** Ưu tiên registry (`work/projects.json` → `environments.<env>.db`);
+> **thiếu thì tự đọc `application-<env>.yml` của app Spring** (`spring_config.py`, hỗ trợ cả
+> layout JHipster `src/main/resources/config/`) — probe hit đúng DB mà app đang dùng, không cần
+> khai lại. Registry luôn thắng theo từng khoá. Xem nhanh:
+> `python spring_config.py read --project <P> --env dev` (mật khẩu che, `--show-secrets` để hiện).
+
 ## Probe lẻ (mỗi thành phần)
 
 ```bash

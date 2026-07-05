@@ -38,6 +38,7 @@ import sys
 import time
 
 import config
+import daemon_common
 import gitlab_api
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -229,8 +230,8 @@ def _spawn_review(mr):
 def poll_once(username, who, include_drafts, spawn, state, max_per_cycle=3, baseline=False):
     mrs = gitlab_api.list_review_merge_requests(username, who)
     if mrs and isinstance(mrs[0], dict) and mrs[0].get("error"):
-        print(f"[{_now()}] [ERROR] GitLab: {mrs[0].get('message')}", file=sys.stderr)
-        return
+        # Let the supervisor classify: 401/403 -> stop+notify; network/5xx -> backoff.
+        daemon_common.guard(mrs[0], "GitLab")
     spawned = 0
     for mr in mrs:
         if mr.get("draft") and not include_drafts:
@@ -275,16 +276,18 @@ def run(who, interval, include_drafts, spawn, max_per_cycle, review_existing):
           f"tối đa {max_per_cycle} review/vòng | Ctrl+C để dừng")
     _prune_worktrees()   # clean up any leftover review worktrees from a previous run
     state = _load_state()
-    if not state and not review_existing:   # first run: baseline, don't flood with the backlog
-        poll_once(username, who, include_drafts, spawn, state, max_per_cycle, baseline=True)
-    while True:
-        try:
+    pending_baseline = not state and not review_existing  # first run: baseline, skip backlog
+
+    def _poll():
+        nonlocal pending_baseline
+        if pending_baseline:
+            poll_once(username, who, include_drafts, spawn, state, max_per_cycle, baseline=True)
+            pending_baseline = False
+        else:
             poll_once(username, who, include_drafts, spawn, state, max_per_cycle)
-        except KeyboardInterrupt:
-            print(f"\n[{_now()}] stopped."); return
-        except Exception as e:
-            print(f"[{_now()}] poll error: {e}", file=sys.stderr)
-        time.sleep(interval)
+
+    # Supervised loop: exponential backoff on network/5xx, stop+log on 401/403 (token).
+    daemon_common.supervise(_poll, interval=interval, label="mr_watch")
 
 
 if __name__ == "__main__":
@@ -302,8 +305,11 @@ if __name__ == "__main__":
         u = gitlab_api.current_user()
         if isinstance(u, dict) and u.get("error"):
             print(f"[ERROR] {u.get('message')}", file=sys.stderr); sys.exit(1)
-        poll_once(u.get("username", ""), a.who, a.include_drafts, a.spawn, _load_state(),
-                  a.max_per_cycle)
+        try:
+            poll_once(u.get("username", ""), a.who, a.include_drafts, a.spawn, _load_state(),
+                      a.max_per_cycle)
+        except daemon_common.DaemonError as e:
+            print(f"[ERROR] {e}", file=sys.stderr); sys.exit(1)
     else:
         try:
             run(a.who, a.interval, a.include_drafts, a.spawn, a.max_per_cycle, a.review_existing)

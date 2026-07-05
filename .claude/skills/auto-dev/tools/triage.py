@@ -129,7 +129,16 @@ def cmd_classify(args) -> dict:
     else:
         tier, mode, reason, _ = classify(args.type, args.title, desc, n_files)
 
-    # Honour explicit operator overrides (a human can force a stricter/looser run).
+    # Couple triage with the clarity gate: a task the clarify step flagged as vague
+    # (unresolved blocking questions) must NOT run fully autonomous — even if it looks
+    # tiny. `auto` requires BOTH a trivial tier AND a clean clarity verdict.
+    clarity_downgrade = None
+    clarity = (getattr(args, "clarity", None) or "").lower().strip()
+    if clarity in ("needs_clarification", "fail", "needs-clarification") and mode == "auto":
+        mode = "checkpoint"
+        clarity_downgrade = "clarity=needs_clarification -> auto downgraded to checkpoint"
+
+    # Honour explicit operator overrides last (a human can force a stricter/looser run).
     if args.force_tier:
         tier = args.force_tier
     if args.force_mode:
@@ -144,6 +153,8 @@ def cmd_classify(args) -> dict:
         "source": source,
         "signals": signals,
     }
+    if clarity_downgrade:
+        out["clarity_downgrade"] = clarity_downgrade
     if fallback_note:
         out["note"] = fallback_note
     return out
@@ -162,6 +173,8 @@ def main() -> int:
                    help="escalate to an agent (claude|cursor|api|dry-run); omit = heuristic only")
     p.add_argument("--model", default=None)
     p.add_argument("--dry-run-text", default=None, help="for --backend dry-run (tests)")
+    p.add_argument("--clarity", default=None,
+                   help="clarify verdict (pass|needs_clarification); needs_clarification blocks auto")
     p.add_argument("--force-tier", default=None, choices=["trivial", "standard", "complex"])
     p.add_argument("--force-mode", default=None, choices=["auto", "checkpoint"])
 

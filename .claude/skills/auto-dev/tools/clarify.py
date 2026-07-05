@@ -93,8 +93,11 @@ def detect(type_, title, desc):
     q = []
 
     def add(category, ask, why, blocking, assumption):
+        # `proposed` = a concrete answer to show the human for one-click confirm. The
+        # heuristic path can't ground it, so it defaults to the generic assumption; the
+        # agent path (with --context-file) overrides it with a repo-grounded proposal.
         q.append({"category": category, "ask": ask, "why": why,
-                  "blocking": blocking, "assumption": assumption})
+                  "blocking": blocking, "assumption": assumption, "proposed": assumption})
 
     # 1. SCOPE — mô tả quá ngắn hoặc liệt kê co giãn => không rõ làm gì, tới đâu.
     #    Blocking khi: gần như rỗng nghĩa (<8 từ) HOẶC có từ co giãn ('v.v./tương tự').
@@ -151,11 +154,15 @@ def detect(type_, title, desc):
 _AGENT_SYSTEM = (
     "You are a requirements-clarification assistant for a coding pipeline. The incoming task is "
     "usually vague. Surface the ambiguities that would make an engineer build the WRONG thing. "
-    "Reply ONLY inside one <clarify> block containing <question> children; each <question> has "
-    "<category>scope|io|acceptance|edge_case|non_functional</category>"
+    "If a <context> block is provided (task comments/checklist and candidate code files from the "
+    "repo), USE IT: ask sharper task-specific questions and propose concrete answers grounded in "
+    "that context. Reply ONLY inside one <clarify> block containing <question> children; each "
+    "<question> has <category>scope|io|acceptance|edge_case|non_functional</category>"
     "<blocking>true|false</blocking><ask>the question</ask><why>why it matters</why>"
-    "<assumption>a sane default if unanswered</assumption>. blocking=true only when a wrong "
-    "answer means wrong code (scope, I/O contract, definition of done). No Markdown, nothing "
+    "<proposed>your best concrete answer from the context (a real file/field/behaviour), or '-' "
+    "if the context is insufficient</proposed>"
+    "<assumption>a sane generic default if unanswered</assumption>. blocking=true only when a "
+    "wrong answer means wrong code (scope, I/O contract, definition of done). No Markdown, nothing "
     "outside the block. Ask at most 6 questions; fewer is better."
 )
 
@@ -168,19 +175,27 @@ def _parse_questions(block):
             continue
         cat = (agent_parser.extract_tag_content(qb, "category") or "scope").strip().lower()
         blk = (agent_parser.extract_tag_content(qb, "blocking") or "").strip().lower()
+        assumption = (agent_parser.extract_tag_content(qb, "assumption") or "").strip()
+        proposed = (agent_parser.extract_tag_content(qb, "proposed") or "").strip()
+        # A "-" proposal means the context couldn't ground it -> fall back to assumption.
+        if proposed in ("", "-", "—"):
+            proposed = assumption
         out.append({
             "category": cat,
             "ask": ask,
             "why": (agent_parser.extract_tag_content(qb, "why") or "").strip(),
-            "blocking": blk.startswith("true") or blk.startswith("có"),
-            "assumption": (agent_parser.extract_tag_content(qb, "assumption") or "").strip(),
+            "blocking": blk.startswith(("true", "có")),
+            "assumption": assumption,
+            "proposed": proposed,
         })
     return out
 
 
-def _detect_via_agent(type_, title, desc, backend, model, dry_run_text):
+def _detect_via_agent(type_, title, desc, backend, model, dry_run_text, context=None):
+    ctx_block = f"<context>{context.strip()}</context>\n" if context else ""
     prompt = (f"<task><type>{type_}</type><title>{title or ''}</title>"
               f"<description>{desc or ''}</description></task>\n"
+              f"{ctx_block}"
               f"Surface clarifying questions in a <clarify> block.")
     raw = agent_runner.run_turn(prompt, system=_AGENT_SYSTEM, backend=backend, model=model,
                                 dry_run_text=dry_run_text)
@@ -197,13 +212,25 @@ def cmd_analyze(args) -> dict:
         with open(args.desc_file, encoding="utf-8") as f:
             desc = f.read().strip()
 
+    context = None
+    context_note = None
+    context_file = getattr(args, "context_file", None)
+    if context_file:
+        try:
+            with open(context_file, encoding="utf-8") as f:
+                context = f.read().strip()
+        except OSError as e:
+            # non-fatal, but never silent: the caller must know clarify ran blind.
+            context_note = f"context-file unreadable ({e}); clarify ran without repo context"
+
     source = "heuristic"
     fallback_note = None
     _, signals = detect(args.type, args.title, desc)
     if args.backend:
         try:
             questions = _detect_via_agent(args.type, args.title, desc,
-                                          args.backend, args.model, args.dry_run_text)
+                                          args.backend, args.model, args.dry_run_text,
+                                          context=context)
             source = "agent"
         except (agent_runner.AgentRunError, ValueError) as e:
             questions, _ = detect(args.type, args.title, desc)
@@ -221,8 +248,9 @@ def cmd_analyze(args) -> dict:
         "source": source,
         "signals": signals,
     }
-    if fallback_note:
-        out["note"] = fallback_note
+    notes = [n for n in (fallback_note, context_note) if n]
+    if notes:
+        out["note"] = "; ".join(notes)
     return out
 
 
@@ -238,10 +266,11 @@ def _load_answers(path):
             items.append({"ask": k, "answer": v})
     elif isinstance(data, list):
         for d in data:
+            # `proposed` (grounded default from analyze) beats a generic `assumption`.
             items.append({
                 "ask": d.get("ask") or d.get("q") or d.get("question") or "",
                 "answer": d.get("answer") or d.get("a") or "",
-                "assumption": d.get("assumption") or "",
+                "assumption": d.get("proposed") or d.get("assumption") or "",
             })
     return items
 
@@ -300,6 +329,8 @@ def main() -> int:
     a.add_argument("--title", default=None)
     a.add_argument("--desc", default=None)
     a.add_argument("--desc-file", default=None)
+    a.add_argument("--context-file", default=None,
+                   help="ngữ cảnh thêm (scout candidates / context pack) cho agent đề xuất câu trả lời")
     a.add_argument("--backend", default=None,
                    help="escalate cho agent (claude|cursor|api|dry-run); bỏ = heuristic")
     a.add_argument("--model", default=None)

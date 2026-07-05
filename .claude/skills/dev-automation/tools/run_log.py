@@ -115,6 +115,7 @@ def _normalize(state: dict) -> dict:
     state.setdefault("mode", "checkpoint")
     state.setdefault("notes", [])
     state.setdefault("test_attempts", 0)
+    state.setdefault("required_extra", {})   # per-run extra required gates, e.g. {"test": ["verify"]}
     return state
 
 
@@ -281,9 +282,12 @@ def policy(state: dict, stage: str) -> dict:
             return {"allowed": False, "missing": [], "advisory": [],
                     "reason": f"prior stage '{prior}' not done (is '{st}')"}
 
-    # (b) required gates must be pass|waived
+    # (b) required gates must be pass|waived — static per-stage set, plus any
+    # per-run extras (e.g. `require <RID> verify` when the task touches runtime).
     missing = []
-    for gate in REQUIRED_GATES.get(stage, []):
+    extra = state.get("required_extra", {}).get(stage, [])
+    for gate in list(REQUIRED_GATES.get(stage, [])) + [g for g in extra
+                                                       if g not in REQUIRED_GATES.get(stage, [])]:
         v = _gate_verdict(state, gate)
         if v not in ("pass", "waived"):
             missing.append(f"{gate}:{v}")
@@ -381,6 +385,25 @@ def cmd_advance(args) -> dict:
     return result
 
 
+def cmd_require(args) -> dict:
+    """Promote a gate to REQUIRED for this run (per-run, per-stage).
+
+    Use case: verify_gen decides the task touches runtime behaviour -> the
+    `verify` gate (flow_check result) must pass before the Test stage advances,
+    even though globally it stays advisory for tasks that never run code.
+    """
+    state = _read(args.run_id)
+    stage = args.stage
+    if stage not in STAGES:
+        raise ValueError(f"unknown stage '{stage}', expected one of {STAGES}")
+    extra = state.setdefault("required_extra", {}).setdefault(stage, [])
+    if args.gate not in extra:
+        extra.append(args.gate)
+        state["notes"].append(f"gate '{args.gate}' promoted to REQUIRED on stage '{stage}'")
+        _write(state)
+    return {"run_id": args.run_id, "stage": stage, "required_extra": extra}
+
+
 def cmd_ac_add(args) -> dict:
     state = _read(args.run_id)
     acs = state.setdefault("acceptance_criteria", [])
@@ -392,11 +415,36 @@ def cmd_ac_add(args) -> dict:
     return state
 
 
+def _evidence_from_verify(ac_id: str, verify_json: str) -> str:
+    """Pull hard evidence for an AC from a flow_check result: the scenario step
+    named '<AC_ID>: ...' must exist AND have passed. A failed/missing step is an
+    error — hand-waving 'unit test passed' must not close a data/behaviour AC."""
+    with open(verify_json, encoding="utf-8") as f:
+        data = json.load(f)
+    prefix = f"{ac_id.lower()}:"
+    hits = [s for s in data.get("steps", [])
+            if str(s.get("name", "")).lower().startswith(prefix)]
+    if not hits:
+        raise ValueError(f"no verify step named '{ac_id}: ...' in {verify_json} — "
+                         f"regenerate the scenario (verify_gen) to cover this AC")
+    failed = [s for s in hits if not s.get("passed")]
+    if failed:
+        raise ValueError(f"verify step for {ac_id} FAILED ('{failed[0].get('name')}') — "
+                         f"fix the code, re-run flow_check; do not map this AC")
+    names = "; ".join(s.get("name", "") for s in hits)
+    return f"verify: {names} [passed, {os.path.basename(verify_json)}]"
+
+
 def cmd_ac_map(args) -> dict:
+    evidence = args.evidence
+    if getattr(args, "verify_json", None):
+        evidence = _evidence_from_verify(args.id, args.verify_json)
+    if not evidence:
+        raise ValueError("pass --evidence \"...\" or --verify-json <flow_check result>")
     state = _read(args.run_id)
     for a in state.get("acceptance_criteria", []):
         if a.get("id") == args.id:
-            a["evidence"] = args.evidence
+            a["evidence"] = evidence
             a["status"] = "met"
             _write(state)
             return state
@@ -464,10 +512,17 @@ def main() -> int:
     p.add_argument("--text", required=True)
     p.add_argument("--id", default=None, help="auto-assigned (AC<n>) if omitted")
 
+    p = sub.add_parser("require", help="promote a gate to REQUIRED for this run (e.g. verify)")
+    p.add_argument("run_id")
+    p.add_argument("gate")
+    p.add_argument("--stage", default="test", help="stage the gate must pass on (default test)")
+
     p = sub.add_parser("ac-map", help="mark an acceptance criterion met, with evidence")
     p.add_argument("run_id")
     p.add_argument("id")
-    p.add_argument("--evidence", required=True)
+    p.add_argument("--evidence", default=None)
+    p.add_argument("--verify-json", default=None,
+                   help="flow_check result: evidence = step '<AC_ID>: ...' (must have PASSED)")
 
     p = sub.add_parser("ac-waive", help="waive an acceptance criterion with a note")
     p.add_argument("run_id")
@@ -484,7 +539,7 @@ def main() -> int:
     handlers = {
         "init": cmd_init, "stage": cmd_stage, "checkpoint": cmd_checkpoint,
         "note": cmd_note, "field": cmd_field, "get": cmd_get, "list": cmd_list,
-        "record-gate": cmd_record_gate, "advance": cmd_advance,
+        "record-gate": cmd_record_gate, "advance": cmd_advance, "require": cmd_require,
         "ac-add": cmd_ac_add, "ac-map": cmd_ac_map, "ac-waive": cmd_ac_waive,
     }
     try:

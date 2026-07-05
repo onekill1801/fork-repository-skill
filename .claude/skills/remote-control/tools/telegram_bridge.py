@@ -36,6 +36,19 @@ import rc_config as cfg  # noqa: E402
 import ssh_exec  # noqa: E402
 import tg_api  # noqa: E402
 
+_DEV_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                        "..", "..", "dev-automation", "tools"))
+sys.path.insert(0, _DEV_DIR)
+try:
+    import daemon_common  # noqa: E402  (backoff + shared health log)
+except Exception:  # noqa: BLE001
+    daemon_common = None
+
+
+def _hlog(event, detail=""):
+    if daemon_common is not None:
+        daemon_common.health_log("telegram_bridge", event, detail)
+
 HOOK_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "telegram_approve.py")
 
@@ -538,12 +551,32 @@ def serve(bot=None, mode="full"):
     print(f"Allowed chats: {_allowed_chats()}")
     print("Ctrl+C để dừng.")
     offset = 0
+    _hlog("started", f"bot={bot or 'default'} mode={mode}")
+    backoff = daemon_common.Backoff() if daemon_common else None
+    fails = 0
+
+    def _delay():
+        return backoff.next() if backoff else 3.0
+
     while True:
         try:
             resp = _get_updates(offset, timeout=30)
             if not resp.get("ok"):
-                time.sleep(3)
+                fails += 1
+                code = resp.get("error_code")
+                # 401/403 = bad/expired bot token → needs a fixed .env + restart; log loudly.
+                kind = "fatal" if code in (401, 403) else "transient"
+                delay = _delay()
+                _hlog(kind, f"getUpdates not ok (code {code}): {resp.get('description')}")
+                print(f"[bridge] getUpdates lỗi (code {code}): {resp.get('description')}; "
+                      f"thử lại sau {delay:.0f}s", file=sys.stderr)
+                time.sleep(delay)
                 continue
+            if fails:
+                _hlog("recovered", f"after {fails} failure(s)")
+                fails = 0
+                if backoff:
+                    backoff.reset()
             for upd in resp.get("result", []):
                 offset = upd["update_id"] + 1
                 if "callback_query" in upd:
@@ -551,11 +584,15 @@ def serve(bot=None, mode="full"):
                 elif "message" in upd:
                     _handle_message(upd["message"], settings_path)
         except KeyboardInterrupt:
+            _hlog("stopped", "KeyboardInterrupt")
             print("\nDừng bridge.")
             break
         except Exception as e:  # noqa: BLE001 - keep the daemon alive
-            print(f"[bridge] lỗi vòng lặp: {e}")
-            time.sleep(3)
+            fails += 1
+            delay = _delay()
+            _hlog("transient", f"loop error: {e}; retry in {delay:.0f}s")
+            print(f"[bridge] lỗi vòng lặp: {e}; thử lại sau {delay:.0f}s")
+            time.sleep(delay)
 
 
 if __name__ == "__main__":

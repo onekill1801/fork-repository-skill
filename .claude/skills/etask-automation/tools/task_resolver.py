@@ -19,6 +19,9 @@ Vòng đời mỗi task MỚI / ĐỔI TRẠNG THÁI:
        • UNCLEAR    → báo Telegram, KHÔNG ghi.
 
 Chống lấy trùng / gán nhiều người 1 task:
+  • FLOW LOCK (chung với `auto-dev/tools/task_queue.py`, owner `task_resolver`): luồng này
+    xử lý TUẦN TỰ 1 task/lúc — tránh xung đột code khi nhiều task đụng cùng repo; lock bận
+    thì task để lại cho vòng poll sau. Luồng khác (người làm tay) không bị chặn.
   • STATE (`temp/etask_resolved.json`) khoá theo (task_id → statusType): đã xử lý ở đúng
     trạng thái đó thì KHÔNG đụng lại; lưu luôn `assigned_to` để vòng sau không gán lại người khác.
   • `_inflight`: task đang chờ duyệt sẽ KHÔNG bị vòng poll kế tiếp bốc lại.
@@ -70,6 +73,14 @@ import rc_config as rccfg    # noqa: E402
 import telegram_bridge as tb  # noqa: E402
 import tg_api                # noqa: E402
 
+# auto-dev tools: khoá TUẦN TỰ của luồng resolver, dùng CHUNG với task_queue.py —
+# resolver và `task_queue.py next` (owner mặc định 'task_resolver') không bao giờ
+# chạy 2 task cùng lúc; luồng khác (người làm tay) không bị chặn.
+_AD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__),
+                                       "..", "..", "auto-dev", "tools"))
+sys.path.insert(0, _AD_DIR)
+import task_queue            # noqa: E402
+
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = rccfg.repo_root()
 STATE = os.path.join(REPO_ROOT, "temp", "etask_resolved.json")
@@ -81,7 +92,7 @@ TERMINAL_TYPES = {"completed", "closed", "cancelled", "rejected", "done"}
 # Đè bằng ETASK_RESOLVE_STATUS_TYPES (vd "todo,processing" nếu muốn hẹp lại).
 DEFAULT_STATUS_TYPES = None
 
-_busy = threading.Semaphore(2)     # tối đa 2 task đang phân tích/chờ duyệt cùng lúc
+_busy = threading.Semaphore(2)     # trần thread; TUẦN TỰ thật sự do flow lock của task_queue
 _inflight = set()                  # task đang xử lý (chống vòng poll bốc lại)
 _inflight_lock = threading.Lock()
 
@@ -545,6 +556,13 @@ def _handle_not_fixed(task, chat, v):
 
 
 def _handle_task(task, chat, state):
+    # Khoá luồng resolver (chung file lock với task_queue): flow này xử lý 1 task/lúc.
+    # Đang bận → KHÔNG chờ, trả task về cho vòng poll sau (không mark, không inflight).
+    if not task_queue.try_claim(task_queue.DEFAULT_OWNER, task["id"]):
+        _log(f"[QUEUE] flow '{task_queue.DEFAULT_OWNER}' đang bận → {task['id']} để vòng sau")
+        with _inflight_lock:
+            _inflight.discard(task["id"])
+        return
     with _busy:
         assigned_to = _my_login()
         outcome = "?"
@@ -585,6 +603,7 @@ def _handle_task(task, chat, state):
                 _save_state(state)
             with _inflight_lock:
                 _inflight.discard(task["id"])
+            task_queue.release_claim(task_queue.DEFAULT_OWNER, task["id"])
 
 
 def poll_once(chat, state, act, max_per_cycle, baseline=False):

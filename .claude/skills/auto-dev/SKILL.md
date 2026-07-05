@@ -52,17 +52,22 @@ source before first use.
 
 | Tool | Role in pipeline |
 |------|------------------|
-| `tools/clarify.py` | **Intake gate `clarity`** — surface ambiguities (scope/io/acceptance/edge/non-functional) as blocking-vs-assumed questions; `brief` folds answers into `temp/runs/<id>_brief.md`. Heuristic-first, optional `--backend`. Required gate on stage `plan` |
+| `tools/task_queue.py` | **Intake queue + SERIAL resolver flow** — `scan/intake` enrich+clarify many tasks up front; `next/done` hand out ONE item at a time under a per-flow lock (owner `task_resolver`, shared with `task_resolver.py` — manual work is never blocked). `answer` syncs the clarified brief back onto the eTask task ([WRITE]) so it can be handed off. See `cookbook/intake.md` § Queue, slash `/etask-queue` |
+| `tools/context_pack.py` | **Intake: enrich** — gather description + **comments + checklist + subtasks** (eTask) or **AC/root-cause/solution** (Azure) into `temp/runs/<src>-<id>_context.md`; emits `ac_seeds` + `signals.thin_description`. Feeds clarify/scout/debate as `--desc`. Run FIRST |
+| `tools/clarify.py` | **Intake gate `clarity`** — surface ambiguities (scope/io/acceptance/edge/non-functional) as blocking-vs-assumed questions; `brief` folds answers into `temp/runs/<id>_brief.md`. Heuristic-first, optional `--backend`. Required gate on stage `plan`. Feed it the context pack via `--desc-file` |
 | `tools/triage.py` | **Intake: triage** — classify tier (trivial/standard/complex) + mode (auto/checkpoint); heuristic-first, optional `--backend` agent |
 | `tools/debate_engine.py` | **Plan: Agent Debate** — Dev/Architect/Moderator via subscription CLI agent (claude/cursor/agy, headless; no API key) → `temp/runs/<task_id>_plan.xml`. Loops critique↔rebuttal up to `--rounds` (default 2; Architect `<verdict>APPROVE</verdict>` converges early). Skipped for `tier=trivial` |
 | `tools/agent_runner.py` | **Shared headless-agent primitive** — `run_turn()`; reused by triage / grounding / review_gate |
-| `tools/grounding.py` | **Implement gate `grounding`** — gather target files + neighbours + stack into an artifact before coding |
+| `tools/grounding.py` | `scout` = **Intake pre-grounding** (grep repo by task keywords → candidate files BEFORE the plan, so it anchors to real code); `run` = **Implement gate `grounding`** (gather the plan's target files + neighbours + stack before coding) |
 | `tools/review_gate.py` | **Deliver gate `review`** — review the real `git diff` pre-MR, JSON verdict, posts NOTHING |
+| `tools/verify_gen.py` | **Plan: sinh kịch bản verify** — plan + AC ledger → `temp/runs/<RID>_verify.json` (flow_check format, mỗi AC hành-vi/dữ-liệu = 1 step "ACn: ..."); trả `touches_runtime` → `run_log.py require <RID> verify`. Người duyệt kịch bản cùng plan ở `after_plan` |
+| `../dev-automation/tools/spring_config.py` | **Đọc config app Spring** — parse `application-<env>.yml` (chuẩn + JHipster `resources/config/`) → DB/port/base_url; `project_config` tự gap-fill khi registry thiếu (registry luôn thắng) |
 | `azure_devops.py` / `search.py` (etask) | Intake: read the task + acceptance criteria |
 | `test_runner.py` | **Test gates** — `run --project <p> --kind test\|lint\|build` → JSON `passed` |
 | `probe_*.py` (`probe_db.py check-db` guards the isolated DB) `flow_check.py` `jenkins.py` | **Integration / e2e / CI** — see `cookbook/stack-verify.md` |
 | `local_app.py` | **Local app-under-test lifecycle** — start (mvn/jar) → wait-health → stop, for localhost e2e (run app → call API → watch DB) |
 | `run_log.py` | **Evidence-gated state machine** — `record-gate` / `advance` / AC ledger; resume + audit in `temp/runs/<run_id>.json` |
+| `../dev-automation/tools/feedback.py` | **Learning loop** — `recall` past human corrections into the next run's prompts; `add` a record whenever a human edits a plan / rejects an approval / overrides triage. Ledger at `work/feedback/<project>.jsonl` (gitignored). Closes the "no memory" gap so accuracy improves over runs |
 | `gitlab_api.py` | branch + MR |
 | `notifier.py` | progress notifications (checkpoint `before_notify` guards these) |
 | `../fork-terminal/tools/agent_parser.py` | **Parse Agent↔Agent data** — `<target_files>` / `<error_context>` / `<review>` via stdlib regex |
@@ -87,30 +92,54 @@ to `failed`, post the failure summary, and hand back to the human — do not del
 
 ### Step sequence (checkpoint mode)
 
-1. **Intake + Triage.** Resolve the task. `triage.py classify ...` → tier/mode. Pick a `run_id`,
-   then `run_log.py init <run_id> ... --tier <t> --mode <m>`. Resolve project from
-   `./work/projects.json`; if absent, ask.
-1b. **Clarify (gate `clarity`).** `clarify.py analyze ...` → questions. Ask the **blocking** ones
-   (checkpoint mode); auto mode does NOT ask — `needs_clarification` fails the gate and blocks the
-   debate. `clarify.py brief --answers-file ... --out temp/runs/<id>_brief.md` folds answers; use
-   the brief as the debate `--desc` and `ac-add` the `acceptance_seeds`. `record-gate <RID> clarity
-   --verdict pass|fail`.
-2. **Plan.** `stage plan active`. For `standard|complex`: run `debate_engine.py run ...` (subscription
-   CLI agent, no API key; loops critique↔rebuttal up to `--rounds`, default 2 — bump to `--rounds 3`
-   for `complex`) → `<final_specification>` at `temp/runs/<task_id>_plan.xml`. For
-   `trivial`: skip the debate, write a lean spec (keep `<target_files>`). `stage plan done`.
+1. **Intake + enrich + scout + recall.** Resolve the task, then **`context_pack.py build --source
+   <etask|azure> --task <id>`** to pull comments/checklist/subtasks (eTask) or AC/root-cause (Azure)
+   into `temp/runs/<src>-<id>_context.md` — use THIS as `--desc-file` for everything downstream (never
+   the bare description). `ac-add` its `ac_seeds`. Then `grounding.py scout --run <RID> --root
+   <clone_dir> --keywords "<pack.keywords>"` → candidate files (`temp/runs/<RID>_scout.md`) so the plan
+   anchors to real code. Also **`feedback.py recall --project <P> --stage plan --type <t> --query
+   "<title/desc>"`** → save its `block` to `temp/runs/<RID>_corrections.xml` (past human corrections to
+   feed the debate). Resolve project from `./work/projects.json`; if absent, ask.
+1b. **Clarify (gate `clarity`) → then Triage.** Run clarify FIRST so triage knows if the task is vague:
+   `clarify.py analyze --desc-file <pack> --context-file temp/runs/<RID>_scout.md --backend claude` →
+   questions, each with a **`proposed`** grounded answer. Present blocking ones as "Q → proposed answer"
+   for one-click confirm/edit (checkpoint mode); auto mode does NOT ask — `needs_clarification` fails
+   the gate. `clarify.py brief --answers-file ... --out temp/runs/<id>_brief.md` folds answers; use the
+   brief (+ scout candidates) as the debate `--desc` and `ac-add` the `acceptance_seeds`.
+   `record-gate <RID> clarity --verdict pass|fail`. **Then** `triage.py classify --desc-file <pack>
+   --clarity <clarify_verdict> --backend claude` → tier/mode: `mode=auto` requires tier=trivial AND
+   clarity=pass (a vague task is force-downgraded to `checkpoint`). Pick a `run_id`,
+   `run_log.py init <run_id> ... --tier <t> --mode <m>`. For real tasks prefer `--backend` on both
+   clarify and triage (heuristic fallback is automatic and safe).
+2. **Plan.** `stage plan active`. For `standard|complex`: run `debate_engine.py run ... --desc-file
+   <brief> --corrections-file temp/runs/<RID>_corrections.xml` (subscription CLI agent, no API key;
+   loops critique↔rebuttal up to `--rounds`, default 2 — bump to `--rounds 3` for `complex`) →
+   `<final_specification>` at `temp/runs/<task_id>_plan.xml`. For `trivial`: skip the debate, write a
+   lean spec (keep `<target_files>`). `stage plan done`.
    **✋ Checkpoint `after_plan`** (checkpoint mode) — present the spec as clean Markdown, get approval.
+   **If the human edits the plan before approving, record it:** `feedback.py add --project <P> --stage
+   plan --run-id <RID> --task-type <t> --action edited --correction "<what changed>" --reason "<why>"
+   --tags <...>` — this is what makes the next run smarter. Same on a rejected approval (`--action
+   rejected`) or a triage override (`--stage triage --action overridden`). A CLEAN approval is
+   recorded too (`--action approved`, one line, no correction) — it is the denominator of the
+   straight-through rate in `feedback.py stats`; without it the metric is meaningless.
 3. **Implement.** `stage implement active`. Branch off the env's target branch. **Run `grounding.py`
    and `record-gate <RID> grounding`** before editing. Write code in `clone_dir` (read the grounding
    artifact, follow `java-standards.md`), add/adjust tests. `advance <RID> implement`.
 4. **Test.** `stage test active`. Run + `record-gate` each: `test` (required), `lint` (required,
-   `--verdict waived` if no linter), `build` (advisory). Integration/e2e if the task touches
-   DB/API/Kafka/Redis (guard the isolated DB with `probe_db.py check-db`). A probe `{"error":true}`
-   = "could not run", never a pass. Fix-and-retry the `test` gate up to `MAX_TEST_RETRIES`; still
-   red → STOP, report, no MR. Then `advance <RID> test`.
+   `--verdict waived` if no linter), `build` (advisory). **`verify` (required iff `touches_runtime`
+   — promoted via `run_log.py require <RID> verify` at Plan):** actually RUN the change —
+   `local_app.py start/wait-health` (DB + base_url resolved from the Spring app's
+   `application-<env>.yml` via `spring_config.py` when the registry lacks them) → `probe_db.py
+   check-db` → `flow_check.py --file temp/runs/<RID>_verify.json` → `record-gate <RID> verify
+   --json v.json`. A probe `{"error":true}` = "could not run", never a pass. Fix-and-retry the
+   `test`/`verify` gates up to `MAX_TEST_RETRIES`; still red → STOP, report, no MR. Then
+   `advance <RID> test`.
 5. **Deliver.** `review_gate.py run ...` on the real diff → `record-gate <RID> review` (no posting;
-   fix blockers before MR). `ac-map` each criterion to evidence. **✋ Checkpoint `before_mr`** —
-   show test+review+AC, get approval, then `gitlab_api.py create-mr ...`, store `mr_url`.
+   fix blockers before MR). Map behaviour/data ACs with `ac-map <RID> ACn --verify-json v.json`
+   (the "ACn: ..." step must have PASSED; hand-written `--evidence` is for non-runtime ACs only).
+   **✋ Checkpoint `before_mr`** — show test+verify+review+AC, get approval, then
+   `gitlab_api.py create-mr ...`, store `mr_url`.
 6. **✋ Checkpoint `before_notify`** — confirm, then `notifier.py mr-created <task_id> <url>`,
    update task state, and `advance <RID> deliver` (done iff `review`+`ac` gates pass).
 

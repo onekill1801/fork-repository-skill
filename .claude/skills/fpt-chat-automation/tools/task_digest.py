@@ -101,6 +101,18 @@ try:
 except Exception:
     tb = None
 
+_DEV_DIR = os.path.abspath(os.path.join(TOOLS_DIR, "..", "..", "dev-automation", "tools"))
+sys.path.insert(0, _DEV_DIR)
+try:
+    import daemon_common  # noqa: E402  (shared health log)
+except Exception:
+    daemon_common = None
+
+
+def _hlog(event, detail=""):
+    if daemon_common is not None:
+        daemon_common.health_log("task_digest", event, detail)
+
 
 def _now():
     return time.strftime("%H:%M:%S")
@@ -590,8 +602,10 @@ def run(interval_min, push_telegram, etask_list=None):
     meobj = client.api_get("/user/me") or {}
     me = meobj.get("id")
     if not me:
+        _hlog("fatal", "cannot resolve current user (token bad?)")
         print("[ERROR] không lấy được user hiện tại (token sai?)", file=sys.stderr)
         sys.exit(1)
+    _hlog("started", f"interval={interval_min}m")
     owner_name = (meobj.get("displayName") or meobj.get("fullName")
                   or meobj.get("name") or "")
     buf = Buffer()
@@ -618,6 +632,7 @@ def run(interval_min, push_telegram, etask_list=None):
                                          origin="https://chat.fpt.com", timeout=20,
                                          verify=config.verify_ssl())
                 print(f"[{_now()}] connected.")
+                _hlog("recovered" if backoff > 2 else "connected")
                 backoff = 2
                 last_ping = time.time()
                 while True:
@@ -645,6 +660,7 @@ def run(interval_min, push_telegram, etask_list=None):
             except KeyboardInterrupt:
                 raise
             except Exception as e:  # noqa: BLE001
+                _hlog("transient", f"reconnect in {backoff}s — {e}")
                 print(f"[{_now()}] connection error: {e}; retry in {backoff}s", file=sys.stderr)
                 tokens.refresh(verbose=False)
                 time.sleep(backoff)

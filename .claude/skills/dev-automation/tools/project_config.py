@@ -134,6 +134,24 @@ def resolve(name: str, env: str = None) -> dict:
         )
 
     merged = _deep_merge(base, envs.get(chosen, {})) if chosen else base
+
+    # Spring gap-fill: most Java projects keep the real per-env DB connection in
+    # application-<env>.yml, not in the registry. Fill ONLY the keys the registry
+    # leaves empty (registry always wins), so probes hit the same DB the app uses.
+    clone_dir = block.get("clone_dir")
+    db = merged.get("db") or {}
+    if clone_dir and os.path.isdir(clone_dir) and (not db.get("host") or not db.get("name")):
+        try:
+            import spring_config
+            sc = spring_config.load(clone_dir, env=chosen) or {}
+        except Exception:  # noqa: BLE001 — gap-fill must never break resolution
+            sc = {}
+        sdb = sc.get("db") or {}
+        if sdb:
+            merged = dict(merged)
+            merged["db"] = {**sdb, **{k: v for k, v in db.items() if v not in (None, "")}}
+            merged["_spring_source"] = (sc.get("sources") or [""])[-1]
+
     protected_list = [e.lower() for e in block.get("protected_envs", DEFAULT_PROTECTED)]
     protected = bool(chosen) and chosen.lower() in protected_list
     return {"project": name, "env": chosen, "stack": merged,
