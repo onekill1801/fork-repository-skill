@@ -73,8 +73,35 @@ Yêu cầu mới: đọc task từ eTask → làm giàu + làm rõ yêu cầu �
 - [x] **B.3 Tests + docs** — 18 unit test mới (71/71 xanh); `cookbook/intake.md` § Queue,
       `SKILL.md` tool row, slash command `/etask-queue`. Đã verify sống: `scan` (20 task),
       `intake` task thật (pack + scout trên clone etask, clarify heuristic).
-- [ ] **B.4 (sau)** — worker daemon tự `next` khi rảnh (hiện `next` do người/agent gọi);
-      gộp `etask_watch` enqueue thay vì spawn thẳng.
+- [x] **B.4 Batch tự chạy** ✅ (2026-07-06) — `task_resolver --enqueue`: review loạt task,
+      NOT_FIXED → intake vào queue (ưu tiên map từ priority eTask 1..4 → 1..3).
+      `queue_worker.py run`: tuần tự `next` → spawn agent `/etask-run <id> batch` →
+      done/park; agent chết giữa chừng → tự gỡ lock + fail, không kẹt hàng.
+      **`/etask-run` § BATCH**: mode=auto (gate người → gate bằng chứng; kẹt = PARK +
+      báo Telegram không chờ), **merge LOCAL --no-ff vào nhánh gốc, KHÔNG tạo MR remote**
+      — task sau checkout từ gốc đã chứa task trước; push/MR cả đợt do người quyết sau.
+      Còn lại: gộp `etask_watch` (nhánh EXECUTE giờ trùng với luồng này — nên rút gọn).
+      9 test mới (130/130 xanh; test bắt được bug dry-run release-loop thật).
+- [x] **B.7 `autopilot.py watch` — chế độ POLL** ✅ (2026-07-06) — `run` là one-pass
+      (chạy 1 lượt rồi thoát — người dùng tưởng "bị tắt"); thêm `watch --interval 600`:
+      lặp mãi qua `daemon_common.supervise` (backoff, health log, fatal-stop khi 401),
+      `--resolve-existing` chỉ lượt đầu, task chờ-người được prep-resume mỗi lượt,
+      quiet-idle (không spam Telegram khi rảnh — chỉ nhắn khi có việc/cần người).
+      134/134 xanh.
+- [x] **B.6 `autopilot.py` — MỘT LỆNH cho tất cả** ✅ (2026-07-06, theo yêu cầu:
+      "chỉ chạy 1 lệnh, còn lại tự động, Telegram chỉ hỏi khi cần confirm/làm rõ") —
+      `run --resolve-existing`: (1) resolver `--once --enqueue` review loạt;
+      (2) prep từng item bằng agent `/etask-prep` (resume-aware: plan/gate cũ dùng lại,
+      chỉ wait); người chưa trả lời → ghi `waiting_human`, KHÔNG chặn; (3) worker thực
+      thi các task đã approved. Tổng kết + nhắc chờ qua Telegram. Đã dọn state cũ
+      (queue/baseline/artifacts demo) để đọc lại toàn bộ. 132/132 xanh.
+- [x] **B.5 TÁCH 2 LUỒNG: chuẩn bị ≠ thực thi** ✅ (2026-07-06, theo góp ý người dùng) —
+      state mới `approved`: `ready` (đủ thông tin) → **/etask-prep** (plan + verify_gen +
+      người duyệt after_plan qua Telegram, KHÔNG đụng code, chạy song song nhiều task) →
+      `task_queue.py approve <qid> --plan --verify` → `approved` → **/etask-run** (thuần
+      code: checkout → implement theo plan ĐÃ DUYỆT → fix_loop verify → merge local;
+      không cần người trong lúc chạy, kẹt = PARK). `next` CHỈ nhặt `approved`;
+      `requeue` task từng duyệt → quay thẳng `approved`. 130/130 xanh.
 
 ---
 
@@ -109,8 +136,37 @@ thật và soi dữ liệu. Đã đóng 3 khớp thiếu:
       `--cmd` > `projects.json.app_run_cmd` > mvn default; etask đã khai lệnh
       java+PropertiesLauncher (2 ngõ cụt mvnw/exec:java ghi ở `_app_run_note` + memory).
       Verify sống: start không cần `--cmd` → app UP → stop sạch.
-- [ ] **C.7 (sau)** — nối verify fail → feedback ledger (tag `missed-verify`); sinh scenario
-      cho Kafka/Redis khi plan nhắc tới; verify chạy dưới `bg_notify` khi qua Telegram bridge.
+- [x] **C.7 `fix_loop.py` — chạy local lỗi thì TỰ SỬA CODE** ✅ (2026-07-06) —
+      target đỏ → bóc nguyên nhân theo loại (boot log `Caused by` · flow_check step đỏ ·
+      `<error_context>` unit test) → fix-agent headless (chạy TRONG clone_dir, `agent_runner`
+      thêm `cwd=`) sửa tối thiểu → `mvn compile` → retest. **Theo mode**: `auto` tự áp + lặp
+      ≤ `--max-attempts`; `checkpoint` dừng sau mỗi lần sửa, trả **diff chờ người duyệt**
+      (gọi lại = compile+retest). Sửa thành công → tự ghi feedback ledger (stage=`fix`,
+      tag `<kind>-fail,auto-fix`) → recall né lỗi lặp. Hết attempts → failed + history,
+      note run_log, bàn giao người. 8 test mới (112/112 xanh).
+- [x] **C.8a Clarify qua Telegram, trả lời TỰ DO** ✅ (2026-07-06, theo yêu cầu người dùng:
+      "có các mục để tôi viết comment phản hồi, đừng chỉ cho option chọn") —
+      `task_queue.py ask-tg <qid>` gửi mục đánh số (❗ blocking) + đề xuất;
+      `reply <qid> --text "1: ok; 2: dùng 409..."` parse comment tự do → brief → sync eTask
+      → xác nhận ngược Telegram. `mark <qid> --to <statusType>` chuyển trạng thái task
+      (tra status-ID theo-list, chống mượn ID chéo list). Đã gửi thật task
+      `00002AeIAqUpRPmvKAViMg1J` (5 mục). 9 test mới (121/121 xanh).
+- [x] **C.8b `tg_gate.py` — MỌI mốc duyệt qua Telegram, trả lời tự do** ✅ (2026-07-06) —
+      `send --gate after_plan|before_mr|before_notify|fix_diff` gửi mục đánh số + đề xuất;
+      `parse` comment "1: ok; 2: sửa X" → approved/comment từng mục (mục comment = thực hiện
+      chỉnh + feedback ledger). Đã gửi thật gate after_plan của task `...Mg1J` (5 mục, gồm cả
+      quyết định mark processing). pipeline.md đổi kênh duyệt mặc định sang Telegram.
+      3 test mới (124/124 xanh).
+- [x] **C.8c `tg_gate wait/reply` + `/etask-run`** ✅ (2026-07-06) — pipeline THẬT SỰ
+      chờ được: `wait` poll reply-file (+ `--poll-updates` getUpdates trực tiếp khi bridge
+      tắt), `reply` cho bridge/người ghi nhận tin; timeout → tạm dừng, gọi lại wait.
+      **`/etask-run <task_id>`** = entry DUY NHẤT cho cả luồng (intake → clarify-tg →
+      lock+mark → plan+verify_gen → gate after_plan-tg → implement → fix_loop (gate
+      fix_diff-tg) → before_mr-tg → MR → before_notify-tg → mark+notify → done).
+      126/126 test xanh.
+- [ ] **C.8d (sau)** — bridge TỰ route tin trả-lời-gate về `tg_gate.py reply`/`task_queue.py
+      reply` (hiện bridge agent đọc hướng dẫn trong command rồi tự gọi); sinh scenario
+      Kafka/Redis; verify/fix_loop bọc `bg_notify` dưới bridge.
 
 ---
 

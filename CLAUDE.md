@@ -70,6 +70,7 @@ python feedback.py add|recall|list|search|stats --project <P> ...   # sổ học
 ### etask-automation (`.claude/skills/etask-automation/tools/`)
 ```
 python tasks.py get|query|subtasks|by-sprint ...   # đọc
+python tasks.py get-detail <id>                    # REST trực tiếp /api/tasks/{id} — đủ field hơn kênh ai/execute (cần ETASK_BEARER_TOKEN)
 python tasks.py create|update|complete|move|assign-sprint|delete ...   # [WRITE]
 python projects.py my-projects|my-lists|sprints|get-sprint|workspace ...
 python search.py my-tasks|tasks|dashboard|candidates ...   # --status-type · --format summary|table|json · --fields ...

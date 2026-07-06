@@ -22,15 +22,22 @@ Tool: `.claude/skills/auto-dev/tools/task_queue.py` (chi tiết luồng:
    - `--project` = tên trong `work/projects.json` (bật scout + recall). `--backend claude`
      cho câu hỏi sát + `proposed` (bỏ = heuristic, không tốn token).
    - `--post-questions` là `[WRITE]` (comment lên eTask, team thấy) → **hỏi trước**.
-3. **Làm rõ + cập nhật ngược:** item `needs_clarification` → trình câu hỏi dạng
-   "Câu hỏi → [proposed] — xác nhận/sửa?". Người dùng chốt →
-   `python task_queue.py answer <qid> --answers-file ans.json` (hoặc `--accept-proposed`
-   khi đồng ý toàn bộ đề xuất). `answer` **mặc định comment brief đã làm rõ lên task
-   eTask** — đây là `[WRITE]` team thấy được → báo người dùng trước; `--no-sync` để bỏ.
+3. **Làm rõ + cập nhật ngược (kênh chính: TELEGRAM, trả lời TỰ DO):**
+   item `needs_clarification` → `python task_queue.py ask-tg <qid>` gửi danh sách mục
+   đánh số (❗ = blocking) kèm đề xuất qua Telegram — **người dùng trả lời bằng comment
+   tự do**, KHÔNG phải nút chọn, dạng: `<qid> 1: ok; 2: dùng 409 thay vì 400; 3: chỉ parent`.
+   Nhận được tin nhắn đó (qua bridge hoặc dán vào phiên) →
+   `python task_queue.py reply <qid> --text "<nguyên văn>"` — mục 'ok'/bỏ qua = nhận đề
+   xuất, text tự do = câu chốt; tự gấp thành brief + **comment lên task eTask** (`[WRITE]`,
+   `--no-sync` để bỏ) + báo xác nhận ngược về Telegram.
+   Ngồi tại terminal thì vẫn dùng được `answer <qid> --answers-file|--accept-proposed`.
    Task đã đủ ngữ cảnh → muốn giao người khác thì dùng `/etask-triage` (assign-users).
-4. **Xử lý tuần tự (luồng resolver):** khi người dùng muốn làm task tiếp theo →
-   `python task_queue.py next` (lock owner `task_resolver` — chung với daemon
-   `task_resolver.py`; bị từ chối nếu luồng đó còn task đang xử lý).
+4. **HAI LUỒNG TÁCH BIỆT:** `ready` (đủ thông tin) **chưa được thực thi** — phải qua
+   **/etask-prep** (plan + verify + người duyệt qua Telegram) → `task_queue.py approve <qid>`
+   → `approved`. Luồng thực thi (**/etask-run** hoặc `queue_worker.py run`) dùng
+   `python task_queue.py next` — CHỈ nhặt `approved` (lock owner `task_resolver`,
+   tuần tự). Bắt đầu code → `mark <qid> --to processing` `[WRITE]`; xong đợt có MR →
+   `mark <qid> --to approved --comment "MR: <url>"` theo workflow.
    Chạy pipeline @.claude/skills/auto-dev/cookbook/pipeline.md với ngữ cảnh có sẵn
    trong item: `artifacts.brief`/`.pack` làm `--desc-file`, `artifacts.corrections`
    cho debate, `ac_seeds` → `run_log.py ac-add`, `run_id` như JSON gợi ý.

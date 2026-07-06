@@ -140,13 +140,21 @@ python run_log.py stage <RID> plan done
 ```
 
 ### ✋ Checkpoint `after_plan`
-Trình bày plan cho người dùng **dưới dạng Markdown sạch** (bỏ thẻ — thẻ chỉ dùng cho
-Agent↔Agent) **KÈM kịch bản verify** (`<RID>_verify.json`: step nào chứng minh AC nào,
-mục `needs_review` phải được người xác nhận). Chờ duyệt. Khi được duyệt:
+**KÊNH DUYỆT MẶC ĐỊNH: TELEGRAM, trả lời tự do** (áp dụng cho MỌI mốc ✋ trong pipeline —
+after_plan / before_mr / before_notify / diff của fix_loop):
 ```bash
+python tg_gate.py send --run <RID> --gate after_plan --title "<tiêu đề task>" \
+  --item "PLAN: <tóm tắt approach> || đề xuất: duyệt" \
+  --item "KỊCH BẢN VERIFY <n> step: <tóm tắt> || đề xuất: duyệt" \
+  --item "<từng mục needs_review của verify_gen> || đề xuất: <cách xử lý>"
+# Người dùng trả lời MỘT tin nhắn tự do: "<RID> 1: ok; 2: sửa X; 3: ok" (bỏ qua/'ok' = duyệt).
+python tg_gate.py parse --run <RID> --gate after_plan --text "<nguyên văn trả lời>"
+# -> approved_all + comment từng mục: mục có comment = THỰC HIỆN chỉnh + feedback.py add
+#    --action edited; xong hết mới:
 python run_log.py checkpoint <RID> after_plan approved
 ```
-KHÔNG sửa code trước khi mốc này được duyệt.
+(Không có Telegram/ngồi tại terminal → trình plan dạng Markdown sạch + kịch bản verify
+ngay trong phiên như cũ.) KHÔNG sửa code trước khi mốc này được duyệt.
 
 ## 3. Implement
 
@@ -235,8 +243,21 @@ python run_log.py record-gate <RID> verify --json v.json      # verdict suy từ
 # 3) dừng app local nếu có chạy:
 python local_app.py stop --name <P>
 ```
-- `verify` đỏ → sửa code, chạy lại (cùng vòng 3-retry với cổng test). Ở `mode=auto`,
-  `advance <RID> test` sẽ **CHẶN** khi gate verify chưa pass (do đã `require`).
+- **`verify`/`test` đỏ → `fix_loop.py` tự chẩn đoán và SỬA CODE** (thay cho việc bỏ dở):
+  ```bash
+  cd ../../auto-dev/tools
+  python fix_loop.py run --run <RID> --project <P> --kind verify --env dev
+  # bóc nguyên nhân theo loại (boot log 'Caused by' | flow_check step đỏ | <error_context>
+  # của unit test) -> fix-agent headless sửa TỐI THIỂU trong clone_dir -> compile -> chạy lại.
+  # THEO MODE của run:  auto = tự áp + lặp tới --max-attempts (mặc định 3)
+  #                     checkpoint = DỪNG sau mỗi lần sửa, trả diff chờ NGƯỜI duyệt;
+  #                                  duyệt xong gọi lại fix_loop (nó compile + retest);
+  #                                  từ chối: git -C <clone_dir> checkout -- . rồi fix_loop reset
+  # Xanh sau khi sửa -> bài học tự ghi vào feedback ledger (stage=fix, tag <kind>-fail)
+  # + kết quả verify ở temp/runs/<RID>_verify_result.json cho record-gate/ac-map.
+  # Hết attempts vẫn đỏ -> status=failed + history đầy đủ, bàn giao người, KHÔNG advance.
+  ```
+  Ở `mode=auto`, `advance <RID> test` vẫn **CHẶN** khi gate verify chưa pass (do đã `require`).
 - Kết quả `v.json` dùng tiếp ở Deliver: `ac-map --verify-json` (bằng chứng thật cho AC).
 
 **Cổng integration/e2e bổ sung** (Kafka/Redis/scenario tay) — chi tiết: `cookbook/stack-verify.md`.
@@ -306,6 +327,10 @@ Người thật sẽ thấy notification → confirm trước:
 python run_log.py checkpoint <RID> before_notify approved
 python notifier.py mr-created <task_id> "<mr_url>"
 python azure_devops.py state <task_id> Resolved
+# Task nguồn eTask: chuyển trạng thái + đính link MR lên task [WRITE]:
+python ../../auto-dev/tools/task_queue.py mark <qid> --to approved --comment "MR: <mr_url>"
+#   (--to theo workflow của bạn: processing khi BẮT ĐẦU làm — gọi ngay sau `next`;
+#    approved/"chờ phê duyệt" khi MR xong; completed khi task được nghiệm thu)
 python run_log.py advance <RID> deliver    # done iff gate review+ac đạt (auto chặn / checkpoint báo)
 ```
 

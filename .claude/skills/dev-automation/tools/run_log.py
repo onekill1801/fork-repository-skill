@@ -419,11 +419,12 @@ def _evidence_from_verify(ac_id: str, verify_json: str) -> str:
     """Pull hard evidence for an AC from a flow_check result: the scenario step
     named '<AC_ID>: ...' must exist AND have passed. A failed/missing step is an
     error — hand-waving 'unit test passed' must not close a data/behaviour AC."""
+    import re as _re
     with open(verify_json, encoding="utf-8") as f:
         data = json.load(f)
-    prefix = f"{ac_id.lower()}:"
-    hits = [s for s in data.get("steps", [])
-            if str(s.get("name", "")).lower().startswith(prefix)]
+    # 'AC1:' / 'AC1-' / 'AC1 ' đều tính — agent sinh scenario hay đổi dấu phân cách.
+    rx = _re.compile(rf"^\s*{_re.escape(str(ac_id))}\s*[:\-_ ]", _re.IGNORECASE)
+    hits = [s for s in data.get("steps", []) if rx.match(str(s.get("name", "")))]
     if not hits:
         raise ValueError(f"no verify step named '{ac_id}: ...' in {verify_json} — "
                          f"regenerate the scenario (verify_gen) to cover this AC")

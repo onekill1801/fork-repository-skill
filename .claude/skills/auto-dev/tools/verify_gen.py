@@ -194,13 +194,18 @@ def _parse_scenario(raw):
     return scenario
 
 
+def _ac_step_re(ac_id):
+    """Step name proves an AC when it starts 'AC1:' / 'AC1-' / 'AC1_' / 'AC1 ' —
+    agents alternate separators no matter how firmly the prompt says ':'."""
+    return re.compile(rf"^\s*{re.escape(str(ac_id))}\s*[:\-_ ]", re.IGNORECASE)
+
+
 def _ac_coverage(scenario, acs):
-    step_names = [str(s.get("name", "")).lower() for s in scenario.get("steps", [])]
+    step_names = [str(s.get("name", "")) for s in scenario.get("steps", [])]
     covered, uncovered = [], []
     for a in acs:
-        ac_id = str(a.get("id", "")).lower()
-        (covered if any(n.startswith(ac_id + ":") for n in step_names) else uncovered).append(
-            a.get("id"))
+        rx = _ac_step_re(a.get("id", ""))
+        (covered if any(rx.match(n) for n in step_names) else uncovered).append(a.get("id"))
     return covered, uncovered
 
 

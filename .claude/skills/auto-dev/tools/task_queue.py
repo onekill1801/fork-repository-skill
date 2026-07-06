@@ -12,11 +12,14 @@ Hand-off: `answer` folds the human's answers into a brief AND (source=etask, def
 comments that brief back onto the eTask task — the task becomes self-contained so it
 can be reassigned to someone else with full context (`--no-sync` to skip the [WRITE]).
 
-Item lifecycle:
-    intake/add -> needs_clarification --answer/--accept-proposed--> ready
-                          \\--(clarify verdict pass)--------------> ready
-    ready --next--> processing --done ok--> done
-                              \\--done fail--> failed --requeue--> ready
+Item lifecycle — HAI LUỒNG TÁCH BIỆT (chuẩn bị ≠ thực thi):
+    [LUỒNG CHUẨN BỊ — bổ sung thông tin + duyệt solution, có người, song song được]
+    intake/add -> needs_clarification --answer--> ready --(plan+verify_gen+duyệt
+                     \\--(clarify pass)---------> ready    after_plan)--approve--> approved
+    [LUỒNG THỰC THI — chỉ code, tuần tự, không cần người]
+    approved --next--> processing --done ok--> done
+                                 \\--done fail--> failed --requeue--> approved
+    `next` CHỈ nhặt `approved` — task chưa duyệt solution không bao giờ được thực thi.
 
 Intake per task = context_pack (comments/checklist/subtasks) -> scout (candidate
 files in clone_dir) -> feedback recall (past corrections) -> clarify (questions with
@@ -45,6 +48,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -61,8 +65,8 @@ _ETASK_TOOLS = os.path.join(_SKILLS, "etask-automation", "tools")
 sys.path.insert(0, _HERE)
 sys.path.insert(0, _DEV_TOOLS)
 
-STATES = ("needs_clarification", "ready", "processing", "done", "failed")
-OPEN_STATES = ("needs_clarification", "ready", "processing")
+STATES = ("needs_clarification", "ready", "approved", "processing", "done", "failed")
+OPEN_STATES = ("needs_clarification", "ready", "approved", "processing")
 
 
 def _now():
@@ -210,6 +214,12 @@ def _runs_dir():
 
 
 # --- intake enrichment (each step is best-effort; failures land in notes) ----------
+
+def etask_priority_to_queue(p):
+    """eTask priority (str '1'..'4', 1=Khẩn cấp) -> queue priority (1..3, 1 chạy trước).
+    Dùng bởi task_resolver --enqueue để xếp thứ tự batch."""
+    return {"1": 1, "2": 1, "3": 2, "4": 3}.get(str(p or "").strip(), 2)
+
 
 def _apply_thin_guard(item):
     """Enforce the intake rule: a thin description with NO extra context (no comments/
@@ -438,6 +448,184 @@ def _sync_brief_to_etask(item, brief_text, notes):
         item["brief_synced"] = _now()
 
 
+_RC_TOOLS = os.path.join(_SKILLS, "remote-control", "tools")
+
+
+def _send_tg(text):
+    """Send an HTML message to the first allowed Telegram chat. Test seam.
+    Returns (ok, detail)."""
+    sys.path.insert(0, _RC_TOOLS)
+    try:
+        import tg_api
+        bot = tg_api.approval_bot()
+        chats = tg_api.allowed_chats(bot)
+        if not chats:
+            return False, "TELEGRAM_ALLOWED_CHATS trống"
+        r = tg_api.send_message(chats[0], text, bot=bot)
+        return bool(r.get("ok")), r.get("description") or ""
+    except Exception as e:  # noqa: BLE001 — Telegram down must not crash the queue
+        return False, str(e)
+
+
+def _questions_tg_text(item):
+    """Numbered free-reply form — the human answers by COMMENT, not buttons."""
+    import html as _html
+    qid = item["qid"]
+    lines = [f"📋 <b>Làm rõ yêu cầu — {_html.escape(item.get('title') or qid)}</b>",
+             f"<code>{qid}</code>", ""]
+    for i, q in enumerate(item.get("questions") or [], 1):
+        mark = "❗" if q.get("blocking") else "▫️"
+        lines.append(f"{i}. {mark} {_html.escape(q.get('ask') or '')}")
+        prop = q.get("proposed") or q.get("assumption") or ""
+        if prop:
+            lines.append(f"   → <i>Đề xuất: {_html.escape(prop)}</i>")
+    lines += ["",
+              "✍️ Trả lời bằng MỘT tin nhắn, mỗi mục một ý:",
+              f"<code>{qid} 1: ok; 2: dùng 409 thay vì 400; 3: chỉ parent</code>",
+              "(mục bỏ qua hoặc 'ok/đồng ý' = chấp nhận đề xuất; ❗ = câu chặn)"]
+    return "\n".join(lines)
+
+
+# Ranh giới mục: đầu chuỗi, ';', ',', xuống dòng, hoặc '. ' — người dùng viết tự nhiên
+# đủ kiểu ("1: ok; 2: ...", "1: ok, 2: ...", "...xóa. 5: subtask...").
+_REPLY_SEG = re.compile(r"(?:^|[;,\n]|\.\s)\s*(\d{1,2})\s*[:.)]\s*")
+_ACCEPT_WORDS = {"ok", "oke", "okay", "y", "yes", "đồng ý", "dong y", "agree", "chốt", "chot"}
+
+
+def _parse_reply(text, questions):
+    """'1: ok; 2: dùng 409; 3: chỉ parent' -> answers list khớp thứ tự câu hỏi.
+
+    Mục bỏ qua / 'ok' = chấp nhận proposed (thành assumption trong brief);
+    text tự do = câu trả lời CHỐT của người dùng.
+    """
+    text = (text or "").strip()
+    # bỏ tiền tố qid nếu người dùng dán lại
+    text = re.sub(r"^\S*-\S+\s+", "", text) if re.match(r"^\S+-\S+\s+\d", text) else text
+    found = {}
+    matches = list(_REPLY_SEG.finditer(text))
+    for j, m in enumerate(matches):
+        end = matches[j + 1].start() if j + 1 < len(matches) else len(text)
+        found[int(m.group(1))] = text[m.end():end].strip().strip(";")
+    answers = []
+    for i, q in enumerate(questions or [], 1):
+        raw = (found.get(i) or "").strip()
+        accepted = not raw or raw.lower() in _ACCEPT_WORDS
+        answers.append({
+            "ask": q.get("ask") or "",
+            "answer": "" if accepted else raw,
+            "proposed": q.get("proposed") or q.get("assumption") or "",
+        })
+    return answers, sorted(found)
+
+
+def _etask_tool(script, cli_args, timeout=60):
+    """Run an etask CLI, parse its JSON (tolerates warn-preamble). Test seam."""
+    proc = subprocess.run([sys.executable, os.path.join(_ETASK_TOOLS, script), *cli_args],
+                          cwd=_ETASK_TOOLS, capture_output=True, text=True,
+                          encoding="utf-8", timeout=timeout)
+    out = (proc.stdout or "").strip()
+    start = out.find("{")
+    if start == -1:
+        return {"error": True, "message": (proc.stderr or out or "no output")[-300:]}
+    try:
+        return json.loads(out[start:])
+    except json.JSONDecodeError:
+        return {"error": True, "message": f"non-JSON from {script}"}
+
+
+def _envelope_rows(res):
+    content = (res or {}).get("content")
+    if isinstance(content, dict):
+        data = content.get("data")
+        return data if isinstance(data, list) else [content]
+    return content if isinstance(content, list) else []
+
+
+def cmd_ask_tg(args):
+    """Gửi các câu hỏi làm rõ qua Telegram — dạng mục đánh số để NGƯỜI TRẢ LỜI TỰ DO
+    bằng comment (không phải nút chọn). Nhận phản hồi bằng `reply <qid> --text "..."`."""
+    item = _load(args.qid)
+    if not item:
+        return {"error": True, "message": f"no item {args.qid}"}
+    if not item.get("questions"):
+        return {"error": True, "message": "item không có câu hỏi clarify nào"}
+    ok, detail = _send_tg(_questions_tg_text(item))
+    if not ok:
+        return {"error": True, "message": f"gửi Telegram thất bại: {detail}"}
+    item["questions_sent_tg"] = _now()
+    _save(item)
+    return {"ok": True, "sent": len(item["questions"]),
+            "next": f"nhận phản hồi -> task_queue.py reply {args.qid} --text \"<tin nhắn>\""}
+
+
+def cmd_reply(args):
+    """Parse comment tự do ('1: ok; 2: dùng 409...') -> chốt answers -> brief + sync eTask."""
+    item = _load(args.qid)
+    if not item:
+        return {"error": True, "message": f"no item {args.qid}"}
+    if not item.get("questions"):
+        return {"error": True, "message": "item không có câu hỏi để trả lời"}
+    answers, matched = _parse_reply(args.text, item["questions"])
+    apath = os.path.join(_runs_dir(), f"{item['qid']}_answers.json")
+    with open(apath, "w", encoding="utf-8") as f:
+        json.dump(answers, f, ensure_ascii=False, indent=2)
+    out = cmd_answer(argparse.Namespace(qid=args.qid, answers_file=apath,
+                                        accept_proposed=False,
+                                        no_sync=getattr(args, "no_sync", False)))
+    if isinstance(out, dict) and not out.get("error"):
+        out["items_answered"] = matched
+        out["items_accepted_proposed"] = [i + 1 for i in range(len(answers))
+                                          if (i + 1) not in matched]
+        confirm = _send_tg(f"✅ Đã chốt yêu cầu cho <b>{item.get('title') or args.qid}</b> — "
+                           f"{len(matched)} mục bạn sửa, còn lại theo đề xuất. "
+                           f"Task chuyển <code>ready</code>, vào hàng đợi xử lý.")
+        out["tg_confirmed"] = confirm[0]
+    return out
+
+
+def cmd_mark(args):
+    """[WRITE] Chuyển TRẠNG THÁI task trên eTask theo statusType (team thấy được).
+
+    eTask `update_task(status=...)` nhận status-ID theo-từng-list, không nhận keyword —
+    nên tra ID bằng cách quét task trong CÙNG list có statusType đích (đúng cách
+    task_resolver làm; ES trả task chéo list nên phải check listTaskId khớp).
+    Điểm gọi trong luồng: `next` xong -> mark processing ("Đang làm");
+    MR tạo xong -> mark theo workflow của bạn (vd approved/"Chờ phê duyệt").
+    """
+    item = _load(args.qid)
+    if not item:
+        return {"error": True, "message": f"no item {args.qid}"}
+    if item["source"] != "etask":
+        return {"error": True, "message": "mark chỉ áp dụng cho task eTask"}
+    task = _envelope_rows(_etask_tool("tasks.py", ["get", item["task_id"], "--format", "json"]))
+    task = task[0] if task else {}
+    list_id = task.get("listTaskId")
+    if not list_id:
+        return {"error": True, "message": "không đọc được listTaskId của task"}
+    current = (task.get("statusType") or "").lower()
+    if current == args.to.lower():
+        return {"ok": True, "unchanged": True, "statusType": current}
+    rows = _envelope_rows(_etask_tool("search.py", ["tasks", "--list", list_id,
+                                                    "--format", "json"]))
+    status_id = next((x.get("status") for x in rows
+                      if x.get("listTaskId") == list_id and x.get("status")
+                      and (x.get("statusType") or "").lower() == args.to.lower()), None)
+    if not status_id:
+        return {"error": True,
+                "message": f"list này không có cột statusType='{args.to}' (hoặc chưa có "
+                           f"task nào ở cột đó để tra ID) — đổi tay trên eTask 1 lần"}
+    upd = _etask_tool("tasks.py", ["update", item["task_id"], "--status", str(status_id)])
+    if upd.get("error") or upd.get("success") is False:
+        return {"error": True, "message": f"update status failed: {upd.get('message')}"}
+    if args.comment:
+        _etask_tool("checklists.py", ["add-comment", item["task_id"], args.comment])
+    item["notes"].append(f"etask status: {current or '?'} -> {args.to} (id={status_id})")
+    item["etask_status"] = args.to
+    _save(item)
+    return {"ok": True, "from": current, "to": args.to, "status_id": status_id,
+            "commented": bool(args.comment)}
+
+
 def cmd_answer(args):
     item = _load(args.qid)
     if not item:
@@ -480,6 +668,26 @@ def cmd_answer(args):
             "brief_synced": item.get("brief_synced")}
 
 
+def cmd_approve(args):
+    """Luồng CHUẨN BỊ kết thúc ở đây: solution (plan + kịch bản verify) đã được người
+    duyệt -> item sang `approved`, đủ điều kiện cho luồng THỰC THI nhặt."""
+    item = _load(args.qid)
+    if not item:
+        return {"error": True, "message": f"no item {args.qid}"}
+    if item["state"] != "ready":
+        return {"error": True,
+                "message": f"chỉ approve được từ 'ready' (đang: {item['state']}) — "
+                           f"needs_clarification thì answer trước"}
+    if args.plan:
+        item["artifacts"]["plan"] = args.plan
+    if args.verify:
+        item["artifacts"]["verify"] = args.verify
+    item["state"] = "approved"
+    item["notes"].append("solution approved" + (f": {args.note}" if args.note else ""))
+    _save(item)
+    return {"ok": True, "item": _summary(item)}
+
+
 def cmd_next(args):
     owner = getattr(args, "owner", None) or DEFAULT_OWNER
     lock = _read_lock(owner)
@@ -487,9 +695,13 @@ def cmd_next(args):
         return {"error": True, "locked_by": lock,
                 "message": f"flow '{owner}' busy: {lock.get('qid')} is processing since "
                            f"{lock.get('ts')} — finish it (`done`) or `release` first"}
-    ready = [i for i in _all_items() if i["state"] == "ready"]
+    # Luồng thực thi CHỈ nhặt task đã duyệt solution — ready/needs_clarification
+    # thuộc luồng chuẩn bị, không bao giờ được code khi chưa chốt.
+    ready = [i for i in _all_items() if i["state"] == "approved"]
     if not ready:
-        return {"ok": True, "message": "queue empty (no ready items)", "item": None}
+        return {"ok": True, "message": "queue empty (no APPROVED items — task ready thì "
+                                       "chạy luồng chuẩn bị /etask-prep để duyệt solution)",
+                "item": None}
     ready.sort(key=lambda i: (i.get("priority", 2), i.get("created", "")))
     item = ready[0]
     item["state"] = "processing"
@@ -505,9 +717,11 @@ def cmd_next(args):
         "item": item,
         "run_id": f"{item.get('project') or item['source']}-{item['task_id']}",
         "pipeline_hint": (
+            "confirm với người dùng rồi `mark <qid> --to processing` (báo team task đang làm); "
             "run auto-dev from here: run_log.py init with --tier/--mode from triage; "
             "use artifacts.brief (or .pack) as --desc-file, artifacts.corrections for "
             "debate --corrections-file, ac_seeds -> run_log ac-add; "
+            "MR xong: `mark <qid> --to approved --comment '<mr_url>'` theo workflow; "
             "when finished: task_queue.py done <qid> --result ok|fail"),
     }
 
@@ -549,7 +763,11 @@ def cmd_requeue(args):
         return {"error": True, "message": f"no item {args.qid}"}
     if item["state"] not in ("failed", "done"):
         return {"error": True, "message": f"requeue only from failed/done (state={item['state']})"}
-    item["state"] = "ready" if item.get("clarify_verdict") == "pass" else "needs_clarification"
+    # đã có plan duyệt -> quay lại thẳng hàng thực thi; chưa -> quay lại luồng chuẩn bị
+    if item.get("artifacts", {}).get("plan") or "solution approved" in " ".join(item.get("notes", [])):
+        item["state"] = "approved"
+    else:
+        item["state"] = "ready" if item.get("clarify_verdict") == "pass" else "needs_clarification"
     item["notes"].append("requeued")
     _save(item)
     return {"ok": True, "item": _summary(item)}
@@ -608,7 +826,27 @@ def main():
     an.add_argument("--no-sync", action="store_true",
                     help="KHÔNG comment brief lên task eTask (mặc định có — [WRITE], team thấy)")
 
-    n = sub.add_parser("next", help="claim the head of the queue (flow lock, serial per owner)")
+    at = sub.add_parser("ask-tg", help="gửi câu hỏi làm rõ qua Telegram (trả lời tự do bằng comment)")
+    at.add_argument("qid")
+
+    rp = sub.add_parser("reply", help="nạp comment trả lời ('1: ...; 2: ok') -> brief + ready")
+    rp.add_argument("qid")
+    rp.add_argument("--text", required=True, help="nguyên văn tin nhắn trả lời của người dùng")
+    rp.add_argument("--no-sync", action="store_true", help="không comment brief lên eTask")
+
+    mk = sub.add_parser("mark", help="[WRITE] chuyển trạng thái task eTask theo statusType")
+    mk.add_argument("qid")
+    mk.add_argument("--to", required=True,
+                    help="statusType đích: todo|processing|approved|completed|closed|custom")
+    mk.add_argument("--comment", default=None, help="comment kèm theo (vd link MR)")
+
+    av = sub.add_parser("approve", help="solution đã duyệt -> item vào hàng THỰC THI")
+    av.add_argument("qid")
+    av.add_argument("--plan", default=None, help="path plan.xml đã duyệt")
+    av.add_argument("--verify", default=None, help="path <RID>_verify.json đã duyệt")
+    av.add_argument("--note", default=None)
+
+    n = sub.add_parser("next", help="claim task ĐÃ DUYỆT đầu hàng (flow lock, serial per owner)")
     n.add_argument("--owner", default=DEFAULT_OWNER,
                    help=f"luồng xử lý giữ lock (mặc định {DEFAULT_OWNER})")
 
@@ -629,8 +867,10 @@ def main():
 
     args = ap.parse_args()
     dispatch = {"intake": cmd_intake, "add": cmd_add, "scan": cmd_scan, "list": cmd_list,
-                "show": cmd_show, "answer": cmd_answer, "next": cmd_next, "done": cmd_done,
-                "release": cmd_release, "requeue": cmd_requeue, "remove": cmd_remove}
+                "show": cmd_show, "answer": cmd_answer, "ask-tg": cmd_ask_tg,
+                "reply": cmd_reply, "approve": cmd_approve, "mark": cmd_mark,
+                "next": cmd_next, "done": cmd_done, "release": cmd_release,
+                "requeue": cmd_requeue, "remove": cmd_remove}
     try:
         out = dispatch[args.cmd](args)
     except (OSError, ValueError) as e:

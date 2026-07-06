@@ -207,6 +207,14 @@ if __name__ == "__main__":
         args = parser.parse_args(sys.argv[2:])
         view.emit(get_task(args.task_id), args.format, view.parse_fields(args.fields))
 
+    elif cmd == "get-detail":
+        # REST trực tiếp GET /api/tasks/{id} — trả ĐẦY ĐỦ field hơn kênh ai/execute
+        # (description/custom fields...). Cần ETASK_BEARER_TOKEN (session JWT), PAT bị 401.
+        parser = argparse.ArgumentParser(prog="tasks.py get-detail")
+        parser.add_argument("task_id")
+        args = parser.parse_args(sys.argv[2:])
+        client.print_json(client.api_get_user(f"/api/tasks/{args.task_id}"))
+
     elif cmd == "query":
         parser = argparse.ArgumentParser(prog="tasks.py query")
         parser.add_argument("list_task_id")

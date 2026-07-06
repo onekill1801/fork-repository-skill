@@ -92,6 +92,57 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _write_argfile(cwd: str) -> dict:
+    """target/cp.txt (maven build-classpath) -> target/local_run.args (java @argfile).
+
+    Java 9+ argfiles dodge the Windows 32k command-line limit that kills
+    `mvn spring-boot:run` on big projects (CreateProcess error=206) — the same trick
+    IntelliJ uses. Classpath = target/classes + every dependency jar; system-scope
+    jars are already in maven's output, and any extra jars in src/main/resources/lib
+    are appended defensively. Paths use forward slashes (argfile quoting treats
+    backslash as escape).
+    """
+    cp_file = os.path.join(cwd, "target", "cp.txt")
+    if not os.path.isfile(cp_file):
+        return {"error": True, "message": f"missing {cp_file} — run mvn dependency:build-classpath first"}
+    with open(cp_file, encoding="utf-8") as f:
+        entries = ["target/classes"] + [e for e in f.read().strip().split(os.pathsep) if e]
+    lib_dir = os.path.join(cwd, "src", "main", "resources", "lib")
+    if os.path.isdir(lib_dir):
+        known = {os.path.basename(e) for e in entries}
+        entries += [f"src/main/resources/lib/{f}" for f in sorted(os.listdir(lib_dir))
+                    if f.endswith(".jar") and f not in known]
+    argfile = os.path.join(cwd, "target", "local_run.args")
+    with open(argfile, "w", encoding="utf-8") as f:
+        f.write('-cp "' + ";".join(e.replace("\\", "/") for e in entries) + '"')
+    return {"ok": True, "argfile": argfile, "entries": len(entries)}
+
+
+def cmd_prep_java(args) -> dict:
+    """Generate the argfile + suggest a run command (no jar packaging needed).
+
+    Re-run when pom dependencies change; code changes only need `mvn -q compile`.
+    """
+    block = project_config.load(args.project) if args.project else {}
+    cwd = os.path.abspath(args.cwd or block.get("clone_dir") or os.getcwd())
+    if not os.path.isfile(os.path.join(cwd, "pom.xml")):
+        return {"error": True, "message": f"no pom.xml in {cwd}"}
+    proc = subprocess.run(
+        "mvn -q dependency:build-classpath -Dmdep.outputFile=target/cp.txt",
+        cwd=cwd, shell=True, capture_output=True, text=True, timeout=300)
+    if proc.returncode != 0:
+        return {"error": True, "message": f"build-classpath failed: {(proc.stderr or proc.stdout or '')[-400:]}"}
+    out = _write_argfile(cwd)
+    if out.get("error"):
+        return out
+    profile = f" -Dspring.profiles.active={args.profile}" if args.profile else ""
+    out["run_cmd"] = (f"java -XX:TieredStopAtLevel=1{profile} -Dfile.encoding=UTF-8 "
+                      f"@target/local_run.args {args.main}")
+    out["note"] = ("đặt run_cmd này vào projects.json `app_run_cmd`; code đổi -> `mvn -q compile`; "
+                   "pom đổi dependency -> chạy lại prep-java")
+    return out
+
+
 def _resolve_cmd(args, block: dict, cwd: str):
     """Run-command precedence: --cmd flag > registry `app_run_cmd` > mvn default.
 
@@ -261,9 +312,17 @@ def main() -> int:
     lg.add_argument("--name", required=True)
     lg.add_argument("--tail", type=int, default=60)
 
+    pj = sub.add_parser("prep-java",
+                        help="sinh target/local_run.args (java @argfile) — chạy app từ classes, "
+                             "không cần build jar, né error=206")
+    pj.add_argument("--project", help="clone_dir từ registry")
+    pj.add_argument("--cwd", help="project root (đè --project)")
+    pj.add_argument("--main", required=True, help="main class, vd com.fis.etask.EtaskApp")
+    pj.add_argument("--profile", default=None, help="spring profile (vd dev)")
+
     args = parser.parse_args()
     handlers = {"start": cmd_start, "wait-health": cmd_wait_health, "status": cmd_status,
-                "logs": cmd_logs, "stop": cmd_stop}
+                "logs": cmd_logs, "stop": cmd_stop, "prep-java": cmd_prep_java}
     return pc.emit(handlers[args.action](args))
 
 

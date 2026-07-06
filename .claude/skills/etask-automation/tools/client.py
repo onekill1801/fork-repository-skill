@@ -30,18 +30,31 @@ def _ssl_ctx():
 
 # ── Low-level HTTP ─────────────────────────────────────────────────────────────
 
-def _http(url: str, method: str = "GET", payload=None) -> dict:
-    """Make an authenticated HTTP request; return parsed JSON dict."""
-    token = config.pat_token()
-    if not token:
-        print("[ERROR] ETASK_PAT_TOKEN is not set. Run: python3 config.py", file=sys.stderr)
-        sys.exit(1)
+def _http(url: str, method: str = "GET", payload=None, auth: str = "pat") -> dict:
+    """Make an authenticated HTTP request; return parsed JSON dict.
 
-    headers = {
-        config.pat_header_name(): token,
+    auth="pat"    -> X-eTask-PAT header (kênh /api/ai/execute và các path PAT-gated)
+    auth="bearer" -> Authorization: Bearer <ETASK_BEARER_TOKEN> (REST trực tiếp như
+                     GET /api/tasks/{id} — PAT bị 401 ở đó; JWT lấy từ session browser)
+    """
+    if auth == "bearer":
+        token = config.get("ETASK_BEARER_TOKEN", "").strip()
+        if not token:
+            return {"error": True, "status": 401,
+                    "message": "ETASK_BEARER_TOKEN chưa đặt trong .env — dán session JWT "
+                               "từ browser (DevTools -> request bất kỳ -> header "
+                               "Authorization: Bearer ...)"}
+        headers = {"Authorization": f"Bearer {token}"}
+    else:
+        token = config.pat_token()
+        if not token:
+            print("[ERROR] ETASK_PAT_TOKEN is not set. Run: python3 config.py", file=sys.stderr)
+            sys.exit(1)
+        headers = {config.pat_header_name(): token}
+    headers.update({
         "Content-Type": "application/json",
         "Accept": "application/json",
-    }
+    })
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=body, headers=headers, method=method)
 
@@ -76,6 +89,11 @@ def execute_tool(tool_name: str, args: dict) -> dict:
 def api_get(path: str) -> dict:
     """HTTP GET against a raw API path (used by auth.py)."""
     return _http(f"{config.base_url()}{path}", method="GET")
+
+
+def api_get_user(path: str) -> dict:
+    """HTTP GET với session Bearer (REST trực tiếp — nhiều field hơn kênh ai/execute)."""
+    return _http(f"{config.base_url()}{path}", method="GET", auth="bearer")
 
 
 def api_delete(path: str) -> dict:

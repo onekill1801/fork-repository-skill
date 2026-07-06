@@ -118,7 +118,8 @@ def _build_argv(argv_tmpl: list, model: str, prompt: str, prompt_via: str) -> li
     return argv
 
 
-def _run_cli(prompt, system, backend, model, cmd_template, prompt_via, timeout) -> str:
+def _run_cli(prompt, system, backend, model, cmd_template, prompt_via, timeout,
+             cwd=None) -> str:
     if cmd_template:
         argv_tmpl = shlex.split(cmd_template)
         default_model = None
@@ -137,7 +138,7 @@ def _run_cli(prompt, system, backend, model, cmd_template, prompt_via, timeout) 
     stdin_data = full_prompt if prompt_via == "stdin" else None
     try:
         proc = subprocess.run(argv, input=stdin_data, capture_output=True, text=True,
-                              timeout=timeout, encoding="utf-8", errors="replace")
+                              timeout=timeout, encoding="utf-8", errors="replace", cwd=cwd)
     except FileNotFoundError:
         raise AgentRunError(
             f"CLI '{argv[0]}' not found on PATH. Install it, change backend, or pass "
@@ -184,11 +185,13 @@ def _run_api(prompt, system, model, max_tokens, timeout) -> str:
 def run_turn(prompt: str, *, system: str = None, backend: str = "claude",
              model: str = None, cmd_template: str = None, prompt_via: str = None,
              timeout: int = CLI_TIMEOUT, max_tokens: int = DEFAULT_MAX_TOKENS,
-             dry_run_text: str = None) -> str:
+             dry_run_text: str = None, cwd: str = None) -> str:
     """Run one headless agent turn; return raw stdout text. Raises AgentRunError.
 
     `dry_run_text` (or backend='dry-run') short-circuits to a canned response so
     callers and their tests can exercise the parsing path without a real agent.
+    `cwd` runs the CLI agent inside that directory — required when the agent must
+    EDIT files there (e.g. fix_loop repairing code in a project clone).
     """
     if backend == "dry-run" or dry_run_text is not None:
         if dry_run_text is None:
@@ -196,7 +199,8 @@ def run_turn(prompt: str, *, system: str = None, backend: str = "claude",
         return dry_run_text
     if backend == "api":
         return _run_api(prompt, system, model, max_tokens, timeout)
-    return _run_cli(prompt, system, backend, model, cmd_template, prompt_via, timeout)
+    return _run_cli(prompt, system, backend, model, cmd_template, prompt_via, timeout,
+                    cwd=cwd)
 
 
 def main() -> int:

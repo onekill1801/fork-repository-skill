@@ -450,6 +450,35 @@ def _db_status(task_id):
 
 
 # ── per-task resolution ─────────────────────────────────────────────
+_ENQUEUE = False   # --enqueue: NOT_FIXED -> xếp vào queue cho worker, không hỏi từng task
+
+
+def _enqueue_for_autodev(task, chat, v):
+    """Chế độ batch: task chưa fix -> intake vào queue (ưu tiên theo priority eTask)
+    để `queue_worker.py` tự chạy tuần tự. Trả 'queued' | 'retry'."""
+    pri = task_queue.etask_priority_to_queue(task.get("priority"))
+    res = task_queue.cmd_intake(_ns_q(
+        source="etask", task=task["id"], project=(v.get("project") or "") or None,
+        type=None, priority=pri, backend=None, model=None, post_questions=False))
+    if res.get("error"):
+        if "already queued" in str(res.get("message", "")):
+            _log(f"[QUEUE] {task['id']} đã trong queue — bỏ qua")
+            return "queued"
+        _notify(chat, f"⚠️ Không xếp hàng được task <code>{html.escape(task['id'])}</code>: "
+                      f"{html.escape(str(res.get('message'))[:200])}")
+        return "retry"
+    st = (res.get("item") or {}).get("state")
+    _log(f"[QUEUE] {task['id']} -> queue (priority={pri}, state={st})")
+    _notify(chat, f"📥 Đã xếp hàng <b>{html.escape(task['name'][:60])}</b> "
+                  f"(ưu tiên {pri}, {st}). Chạy: <code>python queue_worker.py run</code>")
+    return "queued"
+
+
+def _ns_q(**kw):
+    import argparse as _ap
+    return _ap.Namespace(**kw)
+
+
 def _handle_fixed(task, chat, v):
     summary = (f"🟢 <b>Task có vẻ ĐÃ FIX trong code</b>\n<b>{html.escape(task['name'])}</b>\n"
                f"<i>{html.escape(task['project'])} · {task['statusType']}</i>\n"
@@ -492,6 +521,8 @@ def _handle_fixed(task, chat, v):
 
 
 def _handle_not_fixed(task, chat, v):
+    if _ENQUEUE:   # chế độ batch: xếp hàng cho worker thay vì hỏi từng task
+        return _enqueue_for_autodev(task, chat, v)
     """Menu 1 bước: Tôi tự làm / <mỗi thành viên team> / Bỏ qua. Bạn CHỌN ĐÚNG người."""
     cands = _team_candidates()            # [(name, uid)]
     sugg = (v.get("assignee_name") or "").strip().lower()
@@ -557,8 +588,11 @@ def _handle_not_fixed(task, chat, v):
 
 def _handle_task(task, chat, state):
     # Khoá luồng resolver (chung file lock với task_queue): flow này xử lý 1 task/lúc.
-    # Đang bận → KHÔNG chờ, trả task về cho vòng poll sau (không mark, không inflight).
-    if not task_queue.try_claim(task_queue.DEFAULT_OWNER, task["id"]):
+    # NGOẠI LỆ --enqueue: review là READ-ONLY + enqueue chỉ ghi file queue — không đụng
+    # repo code nên KHÔNG cần khoá thực thi; giữ khoá ở đây làm `--once --enqueue`
+    # chỉ xử lý được đúng 1 task/lần chạy (các thread sau fail claim và "để vòng sau"
+    # mà --once không có vòng sau).
+    if not _ENQUEUE and not task_queue.try_claim(task_queue.DEFAULT_OWNER, task["id"]):
         _log(f"[QUEUE] flow '{task_queue.DEFAULT_OWNER}' đang bận → {task['id']} để vòng sau")
         with _inflight_lock:
             _inflight.discard(task["id"])
@@ -589,7 +623,7 @@ def _handle_task(task, chat, state):
                 res = _handle_not_fixed(task, chat, v)
                 if res == "retry":
                     mark = False
-                elif isinstance(res, str) and res not in ("skip", "self"):
+                elif isinstance(res, str) and res not in ("skip", "self", "queued"):
                     assigned_to = res
             else:
                 _notify(chat, f"❓ Chưa rõ task <b>{html.escape(task['name'][:60])}</b> đã fix chưa "
@@ -603,7 +637,8 @@ def _handle_task(task, chat, state):
                 _save_state(state)
             with _inflight_lock:
                 _inflight.discard(task["id"])
-            task_queue.release_claim(task_queue.DEFAULT_OWNER, task["id"])
+            if not _ENQUEUE:
+                task_queue.release_claim(task_queue.DEFAULT_OWNER, task["id"])
 
 
 def poll_once(chat, state, act, max_per_cycle, baseline=False):
@@ -681,7 +716,11 @@ if __name__ == "__main__":
     p.add_argument("--resolve-existing", action="store_true", help="xử lý cả backlog (bỏ baseline)")
     p.add_argument("--task", dest="task_id", default=None,
                    help="xử lý ĐÚNG một task id rồi thoát")
+    p.add_argument("--enqueue", action="store_true",
+                   help="batch: NOT_FIXED -> xếp vào queue (ưu tiên theo priority eTask) "
+                        "cho queue_worker chạy tuần tự, không hỏi từng task")
     a = p.parse_args()
+    _ENQUEUE = a.enqueue
 
     if a.task_id:
         chat = (tg_api.allowed_chats(tg_api.approval_bot()) or [""])[0]

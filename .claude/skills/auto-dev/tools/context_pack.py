@@ -170,6 +170,18 @@ def _etask_subtasks(task_id, notes):
     return (f"Subtasks ({len(lines)})", "\n".join(lines)) if lines else None
 
 
+def _merge_detail(task, detail):
+    """REST trực tiếp (Bearer) trả field mà kênh ai/execute thiếu — detail thắng
+    theo từng khoá không-rỗng. Trả (merged, ok)."""
+    if not isinstance(detail, dict) or detail.get("error"):
+        return task, False
+    merged = dict(task)
+    for k, v in detail.items():
+        if v not in (None, "", [], {}):
+            merged[k] = v
+    return merged, True
+
+
 def _gather_etask(task_id, want_comments, want_checklist, want_subtasks):
     notes, ac_seeds, sections = [], [], []
 
@@ -177,6 +189,17 @@ def _gather_etask(task_id, want_comments, want_checklist, want_subtasks):
     if err:
         notes.append(f"get_task: {err}")
     task = _single(task_res) if task_res else {}
+
+    # Làm giàu bằng REST trực tiếp GET /api/tasks/{id} (cần ETASK_BEARER_TOKEN) —
+    # kênh ai/execute bỏ sót description/custom fields ở một số task.
+    detail, derr = _run_tool(_ETASK_TOOLS, "tasks.py", ["get-detail", str(task_id)])
+    if derr:
+        notes.append(f"get_detail: {derr[:150]}")
+    else:
+        task, ok = _merge_detail(task, detail)
+        if not ok:
+            notes.append(f"get_detail: {str((detail or {}).get('message', 'error'))[:150]}")
+
     title = _first(task, "name", "title", default="")
     desc = _first(task, "description", "desc", default="")
 

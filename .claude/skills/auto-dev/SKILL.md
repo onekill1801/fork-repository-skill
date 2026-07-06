@@ -52,6 +52,7 @@ source before first use.
 
 | Tool | Role in pipeline |
 |------|------------------|
+| `tools/autopilot.py` | **MỘT LỆNH chạy trọn chu trình** — `run --resolve-existing`: resolver review loạt → prep từng task (agent, hỏi Telegram khi cần làm rõ/duyệt; timeout = để nguyên, nhắc người) → worker code tuần tự + merge local. Telegram chỉ chạm người ở: làm rõ · duyệt solution · đóng task FIXED |
 | `tools/task_queue.py` | **Intake queue + SERIAL resolver flow** — `scan/intake` enrich+clarify many tasks up front; `next/done` hand out ONE item at a time under a per-flow lock (owner `task_resolver`, shared with `task_resolver.py` — manual work is never blocked). `answer` syncs the clarified brief back onto the eTask task ([WRITE]) so it can be handed off. See `cookbook/intake.md` § Queue, slash `/etask-queue` |
 | `tools/context_pack.py` | **Intake: enrich** — gather description + **comments + checklist + subtasks** (eTask) or **AC/root-cause/solution** (Azure) into `temp/runs/<src>-<id>_context.md`; emits `ac_seeds` + `signals.thin_description`. Feeds clarify/scout/debate as `--desc`. Run FIRST |
 | `tools/clarify.py` | **Intake gate `clarity`** — surface ambiguities (scope/io/acceptance/edge/non-functional) as blocking-vs-assumed questions; `brief` folds answers into `temp/runs/<id>_brief.md`. Heuristic-first, optional `--backend`. Required gate on stage `plan`. Feed it the context pack via `--desc-file` |
@@ -60,6 +61,8 @@ source before first use.
 | `tools/agent_runner.py` | **Shared headless-agent primitive** — `run_turn()`; reused by triage / grounding / review_gate |
 | `tools/grounding.py` | `scout` = **Intake pre-grounding** (grep repo by task keywords → candidate files BEFORE the plan, so it anchors to real code); `run` = **Implement gate `grounding`** (gather the plan's target files + neighbours + stack before coding) |
 | `tools/review_gate.py` | **Deliver gate `review`** — review the real `git diff` pre-MR, JSON verdict, posts NOTHING |
+| `tools/tg_gate.py` | **Mốc duyệt qua Telegram, trả lời TỰ DO** — `send` mọi checkpoint (after_plan/before_mr/before_notify/fix_diff) dạng mục đánh số + đề xuất; `parse` comment "1: ok; 2: sửa X" → approved/comment từng mục. Mục có comment = thực hiện chỉnh + ghi feedback ledger |
+| `tools/fix_loop.py` | **Test/Verify: vòng tự sửa** — target đỏ → bóc nguyên nhân (boot log / flow step / error_context) → fix-agent sửa code trong clone_dir → compile → retest. Theo mode: auto tự lặp ≤3; checkpoint dừng trả diff chờ người duyệt. Sửa thành công tự ghi feedback ledger (stage=fix) |
 | `tools/verify_gen.py` | **Plan: sinh kịch bản verify** — plan + AC ledger → `temp/runs/<RID>_verify.json` (flow_check format, mỗi AC hành-vi/dữ-liệu = 1 step "ACn: ..."); trả `touches_runtime` → `run_log.py require <RID> verify`. Người duyệt kịch bản cùng plan ở `after_plan` |
 | `../dev-automation/tools/spring_config.py` | **Đọc config app Spring** — parse `application-<env>.yml` (chuẩn + JHipster `resources/config/`) → DB/port/base_url; `project_config` tự gap-fill khi registry thiếu (registry luôn thắng) |
 | `azure_devops.py` / `search.py` (etask) | Intake: read the task + acceptance criteria |
