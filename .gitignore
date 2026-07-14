@@ -141,8 +141,11 @@ temp/
 # Multi-project registry (machine-specific paths / endpoints — visible in tree, not committed)
 work/
 
-# FPT Chat per-conversation style profiles (personal, derived from chat — never commit)
-.claude/skills/fpt-chat-automation/profiles/
+# TChat per-conversation style profiles (personal, derived from chat — never commit)
+.claude/skills/tchat-automation/profiles/
 
 # macOS
 .DS_Store
+
+# Claude Code local settings (máy-cụ-thể, không commit)
+.claude/settings.local.json

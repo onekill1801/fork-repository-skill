@@ -120,8 +120,8 @@ LONGTASK_SYS = (
     "Thay vào đó BẮT BUỘC bọc lệnh bằng bg_notify.py — nó tách rời khỏi claude -p "
     "và tự gửi kết quả (✅/❌ + thời lượng) về Telegram khi xong. Mẫu "
     "(chạy từ gốc repo, dùng đường dẫn đầy đủ để khỏi cd):\n"
-    "  python .claude/skills/dev-automation/tools/bg_notify.py --label \"Build etask dev\" "
-    "-- python .claude/skills/dev-automation/tools/jenkins.py build --project etask --env dev --wait\n"
+    "  python .claude/skills/dev-automation/tools/bg_notify.py --label \"Build atask dev\" "
+    "-- python .claude/skills/dev-automation/tools/jenkins.py build --project atask --env dev --wait\n"
     "Sau khi nó in {\"detached\": true,…}, hãy trả lời ngắn gọn (vd 'Đã chạy nền, "
     "sẽ nhắn khi xong') rồi KẾT THÚC LƯỢT — đừng chờ, đừng poll."
 )

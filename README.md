@@ -36,7 +36,7 @@ claude                     # mở Claude Code trong thư mục này
 
 Hai cách ra lệnh:
 
-1. **Nói tự nhiên** — skill tự kích hoạt: `"deploy etask lên dev"`, `"review MR 524"`,
+1. **Nói tự nhiên** — skill tự kích hoạt: `"deploy atask lên dev"`, `"review MR 524"`,
    `"fix bug task 6955"`, `"đọc 20 message mới nhất topic X"`, `"task của tôi"`.
 2. **Slash command** — gõ `/<tên>`: `/auto-dev 6955`, `/review-mr 524`, `/list-tasks`, ...
 
@@ -62,7 +62,7 @@ chạy được chưa, và trạng thái `.env`.
 |---|---|---|
 | **auto-dev** | Orchestrator: chạy cả chuỗi Plan→Implement→Test→Deliver (có checkpoint) | `/auto-dev <task>`, "làm task X tự động" |
 | **dev-automation** | Azure DevOps + GitLab: đọc task, review MR, fix bug, feature, tạo MR, báo tester | "review MR", "fix bug", "list my tasks" |
-| **etask-automation** | FIS eTask: task/sprint/checklist/analytics (PAT auth) | "tạo task", "task của tôi", "thống kê" |
+| **atask-automation** | aTask: task/sprint/checklist/analytics (PAT auth) | "tạo task", "task của tôi", "thống kê" |
 | **fork-terminal** | Spawn agent khác (Claude/Codex/Gemini) ra terminal mới | "fork terminal use claude code to..." |
 | **skill-scaffold** | Trích tool từ app khác → sinh skill mới trong repo | "extract tools", "scaffold skill" |
 
@@ -77,7 +77,7 @@ Mỗi skill có `SKILL.md` (trigger + workflow) · `cookbook/` (chi tiết) · `
 ```
 Intake ─→ Plan ─[✋ duyệt plan]─→ Implement ─→ Test ─(xanh?)─[✋ trước MR]─→ Deliver ─[✋ trước notify]
   task        kế hoạch              code+test      ▲  no                       tạo MR        báo tester
-(Azure/eTask                                       └─ fix & chạy lại (tối đa 3 lần)
+(Azure/aTask                                       └─ fix & chạy lại (tối đa 3 lần)
  /trực tiếp)
 ```
 
@@ -97,7 +97,7 @@ Mẫu đầy đủ: `workspace/projects.sample.json`.
 ```
 ./work/
   projects.json     # registry: project → {gitlab/azure, clone_dir, stack, environments, ...}
-  etask/            # git clone của từng project
+  atask/            # git clone của từng project
 ```
 
 Mỗi project khai báo:
@@ -111,9 +111,9 @@ Mỗi project khai báo:
 Mọi tool nhận `--project <name> --env <env>`. Ví dụ deploy + lấy nhánh đích:
 ```bash
 cd .claude/skills/dev-automation/tools
-python jenkins.py build --project etask --env dev --wait          # deploy dev
-python jenkins.py build --project etask --env prod --allow-prod --wait   # prod cần --allow-prod
-python -c "import project_config as p; print(p.target_branch('etask','uat'))"   # → uat
+python jenkins.py build --project atask --env dev --wait          # deploy dev
+python jenkins.py build --project atask --env prod --allow-prod --wait   # prod cần --allow-prod
+python -c "import project_config as p; print(p.target_branch('atask','uat'))"   # → uat
 ```
 
 > Ưu tiên config: cờ CLI > env shell > `environments.<env>` > `stack` base > `.env` chung.
@@ -133,8 +133,8 @@ Tất cả ở `.claude/skills/dev-automation/tools/`.
 | `probe_redis.py` | Redis (RESP qua socket) | `probe_redis.py get user:42 --expect-exists` |
 | `probe_kafka.py` | Kafka qua **Confluent REST Proxy** | `probe_kafka.py consume --topic t --expect-contains '"uid":42'` |
 | `kafka_ui.py` | Kafka qua **Provectus Kafka UI** (login form) | `kafka_ui.py messages --cluster c --topic t --from latest` |
-| `jenkins.py` | CI/CD Jenkins (build/status/console/jobs) | `jenkins.py build --project etask --env dev --wait` |
-| `flow_check.py` | **E2E**: kịch bản JSON nối API→DB→Kafka→Redis | `flow_check.py --file scenario.json --project etask --env dev` |
+| `jenkins.py` | CI/CD Jenkins (build/status/console/jobs) | `jenkins.py build --project atask --env dev --wait` |
+| `flow_check.py` | **E2E**: kịch bản JSON nối API→DB→Kafka→Redis | `flow_check.py --file scenario.json --project atask --env dev` |
 
 - `passed:false` = assertion fail; `{"error":true}` = **không chạy được** (service down/thiếu config) → coi là *chưa verify*, không phải đạt.
 - **Guard prod**: probe/flow có thao tác **ghi** vào env protected bị từ chối trừ khi `--allow-prod`; thao tác **đọc** luôn cho phép.
@@ -148,8 +148,8 @@ Sau khi viết feature/fix, sinh **Postman Collection** để FE/tester import l
 chỉnh sửa (backend không cần Swagger; tool parse controller Spring):
 
 ```bash
-python .claude/skills/dev-automation/tools/postman_gen.py --project etask
-# → temp/etask.postman_collection.json (folder theo controller, {{baseUrl}}/{{token}}, body skeleton + tên DTO)
+python .claude/skills/dev-automation/tools/postman_gen.py --project atask
+# → temp/atask.postman_collection.json (folder theo controller, {{baseUrl}}/{{token}}, body skeleton + tên DTO)
 ```
 FE: Postman → Import → set `baseUrl`/`token` 1 lần → chạy mọi endpoint.
 
@@ -168,7 +168,7 @@ Gõ trong Claude Code (thư mục làm việc là repo này).
 | `/review-mr <iid>` | Review GitLab merge request |
 | `/fix-bug <id>` · `/implement-feature <id>` | Workflow fix bug / làm feature |
 | `/notify-tester <id> [url]` | Báo tester qua comment Azure DevOps |
-| `/etask-create` · `/etask-search` · `/etask-projects` · `/etask-stats` | Tác vụ eTask |
+| `/atask-create` · `/atask-search` · `/atask-projects` · `/atask-stats` | Tác vụ aTask |
 | `/extract-tools` · `/design-skill` · `/scaffold-skill` | Sinh skill mới từ app khác |
 
 Mọi command đều có bản nói-tự-nhiên tương đương.
@@ -183,7 +183,7 @@ Copy `.env.sample` → `.env` (đã gitignore). Các khoá chính:
 |---|---|
 | Azure DevOps | `AZURE_DEVOPS_ORG/PROJECT/PAT` |
 | GitLab | `GITLAB_URL/PRIVATE_TOKEN/PROJECT_ID` |
-| eTask | `ETASK_BASE_URL/PAT_TOKEN/PAT_HEADER/VERIFY_SSL` |
+| aTask | `ATASK_BASE_URL/PAT_TOKEN/PAT_HEADER/VERIFY_SSL` |
 | SSL | `SSL_VERIFY` (false cho cert nội bộ) |
 | Stack-verify | `API_BASE_URL`, `DB_*`/`PG_URL`, `REDIS_*`, `KAFKA_REST_URL` |
 | Jenkins | `JENKINS_URL/USER/TOKEN` (nên dùng **API token**, không phải mật khẩu) |
@@ -227,7 +227,7 @@ Linux gnome-terminal/x-terminal-emulator/xterm — tự dò). Dùng để delega
   skills/
     auto-dev/                # orchestrator: pipeline + stack-verify + scenarios
     dev-automation/          # Azure/GitLab + stack-verify tools + multi-project + doctor
-    etask-automation/        # FIS eTask
+    atask-automation/        # aTask
     fork-terminal/           # spawn agent ra terminal
     skill-scaffold/          # sinh skill mới
 .env                         # token + cấu hình (gitignored)

@@ -17,17 +17,17 @@ import runtime_isolator as ri  # noqa: E402
 
 class IsolationGuardTest(unittest.TestCase):
     def test_isolated_name_idempotent(self):
-        self.assertEqual(ri.isolated_db_name("etask", 123), "etask_task_123")
-        self.assertEqual(ri.isolated_db_name("etask_task_123", 123), "etask_task_123")
+        self.assertEqual(ri.isolated_db_name("atask", 123), "atask_task_123")
+        self.assertEqual(ri.isolated_db_name("atask_task_123", 123), "atask_task_123")
 
     def test_verdict_match_passes(self):
-        v = probe_db._check_db_verdict("etask_task_9", "etask_task_9", "postgres", "psql ...")
+        v = probe_db._check_db_verdict("atask_task_9", "atask_task_9", "postgres", "psql ...")
         self.assertTrue(v["passed"])
         self.assertNotIn("error", v)
 
     def test_verdict_mismatch_is_error_not_pass(self):
         # connected to the shared DB instead of the isolated one -> false-pass averted
-        v = probe_db._check_db_verdict("etask", "etask_task_9", "postgres", "psql ...")
+        v = probe_db._check_db_verdict("atask", "atask_task_9", "postgres", "psql ...")
         self.assertFalse(v["passed"])
         self.assertTrue(v["error"])
         self.assertIn("isolation not applied", v["message"])

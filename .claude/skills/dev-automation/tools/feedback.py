@@ -23,14 +23,14 @@ Record schema:
 Stdlib only. Output: one JSON object on stdout.
 
 Usage:
-    python feedback.py add --project etask --stage plan --run-id etask-123 \\
+    python feedback.py add --project atask --stage plan --run-id atask-123 \\
         --task-type bugfix --action edited \\
         --correction "plan targeted UserService, real fix is in AuthFilter" \\
         --reason "this repo puts authz in filters, not services" --tags convention,wrong-file
-    python feedback.py recall --project etask --stage plan --type bugfix --query "authz null check"
-    python feedback.py list --project etask --stage plan --limit 10
-    python feedback.py search --project etask --tags convention --query "exception"
-    python feedback.py stats --project etask
+    python feedback.py recall --project atask --stage plan --type bugfix --query "authz null check"
+    python feedback.py list --project atask --stage plan --limit 10
+    python feedback.py search --project atask --tags convention --query "exception"
+    python feedback.py stats --project atask
 """
 
 import argparse

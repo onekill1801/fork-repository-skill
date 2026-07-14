@@ -21,7 +21,7 @@ Evidence-gated transitions (Hybrid autonomy):
     hatch / for backward compatibility — it still trusts the caller blindly.
 
 Usage:
-    python run_log.py init <run_id> --task 12345 --project etask --type bugfix --title "..." \
+    python run_log.py init <run_id> --task 12345 --project atask --type bugfix --title "..." \
                        [--tier trivial|standard|complex] [--mode auto|checkpoint]
     python run_log.py stage <run_id> plan active
     python run_log.py stage <run_id> test failed

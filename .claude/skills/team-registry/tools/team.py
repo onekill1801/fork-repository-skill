@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Team registry — vai trò, kỹ năng, tính cách của từng người để giao việc & tương tác.
 
-Kho hồ sơ đội nhóm dùng chung cho cả repo: nơi etask_watch (đề xuất ASSIGN đúng
-người) và các watcher FPT Chat (điều chỉnh tông giao tiếp) cùng tra cứu. Dữ liệu
+Kho hồ sơ đội nhóm dùng chung cho cả repo: nơi atask_watch (đề xuất ASSIGN đúng
+người) và các watcher TChat (điều chỉnh tông giao tiếp) cùng tra cứu. Dữ liệu
 ở `work/team.json` — **gitignored** (vai trò/skill/tính cách là thông tin nhạy cảm,
 không commit). Thuần stdlib, chạy mọi OS.
 
@@ -15,7 +15,7 @@ CẤU TRÚC để match + ghi chú TỰ DO cho tính cách/cách tương tác:
       "personality": "...",                # mô tả tính cách (tự do)
       "interaction": "...",                # cách giao tiếp/giao việc hiệu quả (tự do)
       "load": "low|normal|high",           # tải hiện tại (cập nhật tay)
-      "handles": {"email","etask_user_id","gitlab_username","fchat_id","fchat_username"},
+      "handles": {"email","atask_user_id","gitlab_username","fchat_id","fchat_username"},
       "projects": [...], "notes": "..."
     }
 
@@ -24,7 +24,7 @@ Lệnh:
   python team.py get <key>
   python team.py set <key> [--name N] [--role R] [--seniority S] [--skills a,b]
         [--personality T] [--interaction T] [--load low|normal|high]
-        [--email E] [--etask-id X] [--gitlab U] [--fchat-id X] [--fchat-username U]
+        [--email E] [--atask-id X] [--gitlab U] [--fchat-id X] [--fchat-username U]
         [--projects a,b] [--notes T]            # upsert: chỉ đổi field được truyền
   python team.py remove <key>
   python team.py match --task "mô tả task" [--skills a,b] [--top N] [--exclude k1,k2]
@@ -91,7 +91,7 @@ def upsert(key, fields: dict) -> dict:
     for k, v in fields.items():
         if v is None:
             continue
-        if k in ("email", "etask_user_id", "gitlab_username", "fchat_id", "fchat_username"):
+        if k in ("email", "atask_user_id", "gitlab_username", "fchat_id", "fchat_username"):
             handles[k] = v
         elif k in ("skills", "projects"):
             rec[k] = v
@@ -183,7 +183,7 @@ if __name__ == "__main__":
     s = sub.add_parser("set")
     s.add_argument("key")
     for opt in ("name", "role", "seniority", "personality", "interaction", "load",
-                "email", "etask-id", "gitlab", "fchat-id", "fchat-username", "notes"):
+                "email", "atask-id", "gitlab", "fchat-id", "fchat-username", "notes"):
         s.add_argument(f"--{opt}")
     s.add_argument("--skills"); s.add_argument("--projects")
 
@@ -206,7 +206,7 @@ if __name__ == "__main__":
         fields = {
             "name": a.name, "role": a.role, "seniority": a.seniority,
             "personality": a.personality, "interaction": a.interaction, "load": a.load,
-            "email": a.email, "etask_user_id": getattr(a, "etask_id"),
+            "email": a.email, "atask_user_id": getattr(a, "atask_id"),
             "gitlab_username": a.gitlab, "fchat_id": getattr(a, "fchat_id"),
             "fchat_username": getattr(a, "fchat_username"), "notes": a.notes,
             "skills": _csv(a.skills), "projects": _csv(a.projects),

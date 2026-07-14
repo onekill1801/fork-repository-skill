@@ -11,7 +11,7 @@ description for an adhoc request). If nothing was provided, ask the user.
 
 Follow @.claude/skills/auto-dev/cookbook/pipeline.md exactly. Use @.claude/skills/auto-dev/cookbook/intake.md to resolve the request.
 
-1. **Intake** — read the task (`azure_devops.py get <id>` or eTask `search.py`/`tasks.py`), pick a `run_id`.
+1. **Intake** — read the task (`azure_devops.py get <id>` or aTask `search.py`/`tasks.py`), pick a `run_id`.
 2. `run_log.py init <run_id> --task <id> --project <p> --type <bugfix|feature> --title "..."`
 3. **Plan via Agent Debate** (`stage plan active`) — chạy `auto-dev/tools/debate_engine.py run
    --task <id> --desc "..."`: Dev/Architect/Moderator tranh biện → `temp/runs/<id>_plan.xml`

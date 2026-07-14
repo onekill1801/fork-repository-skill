@@ -1,10 +1,10 @@
 {
   "_comment": "Sample registry — copy to <repo>/work/projects.json and edit (gitignored, not committed; override location with env WORK_DIR). clone_dir is machine-specific (absolute path, e.g. into <repo>/work/<name>). test_cmd/build_cmd/lint_cmd power the auto-dev test gate (test_runner.py). Omit a *_cmd to let test_runner auto-detect from pom.xml/package.json/etc.",
-  "etask": {
-    "gitlab_project_id": "5401",
-    "gitlab_path": "idaas/etask",
-    "azure_project": "KYTA-all-in-one",
-    "clone_dir": "D:/Claude-cli/fork-repository-skill/work/etask",
+  "atask": {
+    "gitlab_project_id": "123",
+    "gitlab_path": "group/atask",
+    "azure_project": "My-Azure-Project",
+    "clone_dir": "D:/Claude-cli/fork-repository-skill/work/atask",
     "default_target_branch": "develop",
     "build_cmd": "mvn -B -q -DskipTests package",
     "test_cmd": "mvn -B test",
@@ -13,9 +13,9 @@
     "protected_envs": ["prod", "production"],
     "stack": {
       "_comment": "Base dùng chung cho mọi env (probe đọc qua --project --env). environments.<env> deep-merge đè lên base. Secret nên để .env; nếu để ở đây thì giữ file private (env shell vẫn override).",
-      "db": {"engine": "postgres", "port": "5432", "user": "etask_app", "name": "etask"},
+      "db": {"engine": "postgres", "port": "5432", "user": "atask_app", "name": "atask"},
       "redis": {"port": "6379", "db": "0"},
-      "jenkins": {"job": "idaas/job/etask-ci"}
+      "jenkins": {"job": "group/job/atask-ci"}
     },
     "environments": {
       "local": {
@@ -25,25 +25,25 @@
         "redis": {"host": "localhost"}
       },
       "dev": {
-        "api_base_url": "https://etask.dev.internal",
+        "api_base_url": "https://atask.dev.internal",
         "kafka_rest_url": "http://kafka-rest.dev:8082",
         "db": {"host": "pg.dev"},
         "redis": {"host": "redis.dev"}
       },
       "uat": {
-        "api_base_url": "https://etask.uat.internal",
+        "api_base_url": "https://atask.uat.internal",
         "kafka_rest_url": "http://kafka-rest.uat:8082",
         "db": {"host": "pg.uat"},
         "redis": {"host": "redis.uat"}
       },
       "sandbox": {
-        "api_base_url": "https://etask.sandbox.internal",
+        "api_base_url": "https://atask.sandbox.internal",
         "kafka_rest_url": "http://kafka-rest.sandbox:8082",
         "db": {"host": "pg.sandbox"},
         "redis": {"host": "redis.sandbox"}
       },
       "prod": {
-        "api_base_url": "https://etask.prod.internal",
+        "api_base_url": "https://atask.prod.internal",
         "kafka_rest_url": "http://kafka-rest.prod:8082",
         "db": {"host": "pg.prod"},
         "redis": {"host": "redis.prod"}

@@ -10,7 +10,7 @@ description: >
 # Team Registry
 
 Kho dùng chung lưu **vai trò · kỹ năng · tính cách · cách tương tác** của từng
-người, để `etask_watch` (đề xuất ASSIGN đúng người) và các watcher FPT Chat (điều
+người, để `atask_watch` (đề xuất ASSIGN đúng người) và các watcher TChat (điều
 chỉnh tông giao tiếp) cùng tra cứu.
 
 > Dữ liệu ở `work/team.json` — **gitignored** (thông tin cá nhân/đánh giá tính cách
@@ -22,7 +22,7 @@ chỉnh tông giao tiếp) cùng tra cứu.
 python team.py list [--format summary|json]
 python team.py get <key>
 python team.py set <key> [--name][--role][--seniority][--skills a,b][--personality]
-       [--interaction][--load low|normal|high][--email][--etask-id][--gitlab]
+       [--interaction][--load low|normal|high][--email][--atask-id][--gitlab]
        [--fchat-id][--fchat-username][--projects a,b][--notes]   # upsert, chỉ đổi field truyền
 python team.py remove <key>
 python team.py match --task "mô tả" [--skills a,b] [--top N] [--exclude k1,k2]
@@ -40,9 +40,9 @@ agent đọc shortlist + `team.py get <key>` (hồ sơ đầy đủ) để **ch�
 
 ## Tích hợp
 
-- **etask_watch** (nhánh ASSIGN): chạy `team.py match --task "..." --exclude chungtv8`
+- **atask_watch** (nhánh ASSIGN): chạy `team.py match --task "..." --exclude <ATASK_MY_LOGIN>`
   → chọn người hợp nhất → đưa tên vào đề xuất.
-- **FPT Chat watcher**: `team.py get <fchat_username>` để lấy `personality`/`interaction`
+- **TChat watcher**: `team.py get <fchat_username>` để lấy `personality`/`interaction`
   → điều chỉnh giọng khi nhắn/giao việc.
 
 ## Slash command

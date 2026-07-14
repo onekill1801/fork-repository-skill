@@ -1,7 +1,7 @@
 ---
 name: Auto Dev Orchestrator
 description: >
-  End-to-end coding pipeline: take a request (Azure DevOps / eTask task, or a direct
+  End-to-end coding pipeline: take a request (Azure DevOps / aTask task, or a direct
   description) and drive it through Plan -> Implement -> Test -> Deliver with human
   checkpoints. Gates the merge request on a green test run. Trigger phrases:
   "auto dev", "tự động làm task", "chạy pipeline", "auto-dev task", "làm task tự động",
@@ -10,7 +10,7 @@ description: >
 
 # Auto Dev Orchestrator
 
-Master skill that chains the existing `dev-automation` and `etask-automation` tools into
+Master skill that chains the existing `dev-automation` and `atask-automation` tools into
 one pipeline: **Intake → Plan → Implement → Test → Deliver**. It does not replace those
 skills — it sequences them and adds the two missing pieces: a **test gate** and a
 **resumable run-log**.
@@ -53,8 +53,8 @@ source before first use.
 | Tool | Role in pipeline |
 |------|------------------|
 | `tools/autopilot.py` | **MỘT LỆNH chạy trọn chu trình** — `run --resolve-existing`: resolver review loạt → prep từng task (agent, hỏi Telegram khi cần làm rõ/duyệt; timeout = để nguyên, nhắc người) → worker code tuần tự + merge local. Telegram chỉ chạm người ở: làm rõ · duyệt solution · đóng task FIXED |
-| `tools/task_queue.py` | **Intake queue + SERIAL resolver flow** — `scan/intake` enrich+clarify many tasks up front; `next/done` hand out ONE item at a time under a per-flow lock (owner `task_resolver`, shared with `task_resolver.py` — manual work is never blocked). `answer` syncs the clarified brief back onto the eTask task ([WRITE]) so it can be handed off. See `cookbook/intake.md` § Queue, slash `/etask-queue` |
-| `tools/context_pack.py` | **Intake: enrich** — gather description + **comments + checklist + subtasks** (eTask) or **AC/root-cause/solution** (Azure) into `temp/runs/<src>-<id>_context.md`; emits `ac_seeds` + `signals.thin_description`. Feeds clarify/scout/debate as `--desc`. Run FIRST |
+| `tools/task_queue.py` | **Intake queue + SERIAL resolver flow** — `scan/intake` enrich+clarify many tasks up front; `next/done` hand out ONE item at a time under a per-flow lock (owner `task_resolver`, shared with `task_resolver.py` — manual work is never blocked). `answer` syncs the clarified brief back onto the aTask task ([WRITE]) so it can be handed off. See `cookbook/intake.md` § Queue, slash `/atask-queue` |
+| `tools/context_pack.py` | **Intake: enrich** — gather description + **comments + checklist + subtasks** (aTask) or **AC/root-cause/solution** (Azure) into `temp/runs/<src>-<id>_context.md`; emits `ac_seeds` + `signals.thin_description`. Feeds clarify/scout/debate as `--desc`. Run FIRST |
 | `tools/clarify.py` | **Intake gate `clarity`** — surface ambiguities (scope/io/acceptance/edge/non-functional) as blocking-vs-assumed questions; `brief` folds answers into `temp/runs/<id>_brief.md`. Heuristic-first, optional `--backend`. Required gate on stage `plan`. Feed it the context pack via `--desc-file` |
 | `tools/triage.py` | **Intake: triage** — classify tier (trivial/standard/complex) + mode (auto/checkpoint); heuristic-first, optional `--backend` agent |
 | `tools/debate_engine.py` | **Plan: Agent Debate** — Dev/Architect/Moderator via subscription CLI agent (claude/cursor/agy, headless; no API key) → `temp/runs/<task_id>_plan.xml`. Loops critique↔rebuttal up to `--rounds` (default 2; Architect `<verdict>APPROVE</verdict>` converges early). Skipped for `tier=trivial` |
@@ -65,7 +65,7 @@ source before first use.
 | `tools/fix_loop.py` | **Test/Verify: vòng tự sửa** — target đỏ → bóc nguyên nhân (boot log / flow step / error_context) → fix-agent sửa code trong clone_dir → compile → retest. Theo mode: auto tự lặp ≤3; checkpoint dừng trả diff chờ người duyệt. Sửa thành công tự ghi feedback ledger (stage=fix) |
 | `tools/verify_gen.py` | **Plan: sinh kịch bản verify** — plan + AC ledger → `temp/runs/<RID>_verify.json` (flow_check format, mỗi AC hành-vi/dữ-liệu = 1 step "ACn: ..."); trả `touches_runtime` → `run_log.py require <RID> verify`. Người duyệt kịch bản cùng plan ở `after_plan` |
 | `../dev-automation/tools/spring_config.py` | **Đọc config app Spring** — parse `application-<env>.yml` (chuẩn + JHipster `resources/config/`) → DB/port/base_url; `project_config` tự gap-fill khi registry thiếu (registry luôn thắng) |
-| `azure_devops.py` / `search.py` (etask) | Intake: read the task + acceptance criteria |
+| `azure_devops.py` / `search.py` (atask) | Intake: read the task + acceptance criteria |
 | `test_runner.py` | **Test gates** — `run --project <p> --kind test\|lint\|build` → JSON `passed` |
 | `probe_*.py` (`probe_db.py check-db` guards the isolated DB) `flow_check.py` `jenkins.py` | **Integration / e2e / CI** — see `cookbook/stack-verify.md` |
 | `local_app.py` | **Local app-under-test lifecycle** — start (mvn/jar) → wait-health → stop, for localhost e2e (run app → call API → watch DB) |
@@ -96,7 +96,7 @@ to `failed`, post the failure summary, and hand back to the human — do not del
 ### Step sequence (checkpoint mode)
 
 1. **Intake + enrich + scout + recall.** Resolve the task, then **`context_pack.py build --source
-   <etask|azure> --task <id>`** to pull comments/checklist/subtasks (eTask) or AC/root-cause (Azure)
+   <atask|azure> --task <id>`** to pull comments/checklist/subtasks (aTask) or AC/root-cause (Azure)
    into `temp/runs/<src>-<id>_context.md` — use THIS as `--desc-file` for everything downstream (never
    the bare description). `ac-add` its `ac_seeds`. Then `grounding.py scout --run <RID> --root
    <clone_dir> --keywords "<pack.keywords>"` → candidate files (`temp/runs/<RID>_scout.md`) so the plan
@@ -156,7 +156,7 @@ runs. Re-enter at the first stage whose status is not `done`.
 | User says... | Action |
 |---|---|
 | "auto-dev task #123" / "làm task 123 tự động" | Run the full pipeline for task 123 |
-| "resume run etask-123" | `run_log.py get etask-123` → continue from first non-done stage |
+| "resume run atask-123" | `run_log.py get atask-123` → continue from first non-done stage |
 | "show pipeline runs" | `run_log.py list --open` |
 
 Slash command: `/auto-dev <task_id|description>`.

@@ -39,8 +39,8 @@ def ns(**kw):
 SPRING_YML = """\
 spring:
   datasource:
-    url: jdbc:postgresql://10.0.0.5:5433/etask_dev?currentSchema=drive
-    username: etask_user
+    url: jdbc:postgresql://10.0.0.5:5433/atask_dev?currentSchema=drive
+    username: atask_user
     password: ${DB_PASSWORD:s3cret}
 server:
   port: 8086
@@ -90,9 +90,9 @@ class SpringParseTest(unittest.TestCase):
         self.assertEqual(db["engine"], "postgres")
         self.assertEqual(db["host"], "10.0.0.5")
         self.assertEqual(db["port"], "5433")
-        self.assertEqual(db["name"], "etask_dev")
+        self.assertEqual(db["name"], "atask_dev")
         self.assertEqual(db["schema"], "drive")
-        self.assertEqual(db["user"], "etask_user")
+        self.assertEqual(db["user"], "atask_user")
         self.assertEqual(db["password"], "s3cret")   # ${VAR:default} -> default
         self.assertEqual(cfg["server_port"], "8086")
         self.assertEqual(cfg["base_url"], "http://localhost:8086/api")
@@ -146,7 +146,7 @@ class RegistryGapFillTest(unittest.TestCase):
         self._registry({"clone_dir": self.clone, "environments": {"dev": {}}})
         stack = project_config.resolve("p1", "dev")["stack"]
         self.assertEqual(stack["db"]["host"], "10.0.0.5")
-        self.assertEqual(stack["db"]["name"], "etask_dev")
+        self.assertEqual(stack["db"]["name"], "atask_dev")
         self.assertIn("application-dev.yml", stack["_spring_source"])
 
     def test_registry_values_win(self):
@@ -154,7 +154,7 @@ class RegistryGapFillTest(unittest.TestCase):
                         "environments": {"dev": {"db": {"host": "registry-host"}}}})
         stack = project_config.resolve("p1", "dev")["stack"]
         self.assertEqual(stack["db"]["host"], "registry-host")   # registry thắng
-        self.assertEqual(stack["db"]["name"], "etask_dev")       # spring lấp chỗ trống
+        self.assertEqual(stack["db"]["name"], "atask_dev")       # spring lấp chỗ trống
 
     def test_full_registry_db_skips_spring(self):
         self._registry({"clone_dir": self.clone, "environments": {

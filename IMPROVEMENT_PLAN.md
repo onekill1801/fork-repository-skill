@@ -33,10 +33,10 @@ Vì vậy Phase 1 là bắt buộc trước mọi thứ khác — không có d�
 
 Chẩn đoán bổ sung: độ chính xác auto thấp không chỉ vì task mơ hồ, mà vì pipeline **chỉ đọc
 `title`+`description`** rồi lập plan — bỏ phí ngữ cảnh đã có (comment/checklist/subtask, code repo),
-và lập plan khi còn "mù repo". Bốn đòn bẩy đã triển khai + test trên task eTask thật:
+và lập plan khi còn "mù repo". Bốn đòn bẩy đã triển khai + test trên task aTask thật:
 
 - [x] **A.1 `context_pack.py`** (`auto-dev/tools/`) — gom description + **comment + checklist + subtask**
-      (eTask) hoặc **AC/root-cause/solution** (Azure) → `temp/runs/<src>-<id>_context.md`; xuất `ac_seeds`
+      (aTask) hoặc **AC/root-cause/solution** (Azure) → `temp/runs/<src>-<id>_context.md`; xuất `ac_seeds`
       + `keywords` sạch + `signals.thin_description`. Dùng làm `--desc-file` cho mọi bước sau.
 - [x] **A.2 `grounding.py scout`** — pre-grounding: grep `clone_dir` theo từ khoá task → file ứng viên
       (`temp/runs/<RID>_scout.md`) **trước** khi plan, để plan neo vào code thật. Có lọc ID nhiễu.
@@ -55,12 +55,12 @@ và lập plan khi còn "mù repo". Bốn đòn bẩy đã triển khai + test t
 
 ## Phase B — Intake Queue: xử lý TUẦN TỰ ✅ ĐÃ LÀM (2026-07-05, ngoài plan gốc)
 
-Yêu cầu mới: đọc task từ eTask → làm giàu + làm rõ yêu cầu → xếp hàng đợi; **không chạy
+Yêu cầu mới: đọc task từ aTask → làm giàu + làm rõ yêu cầu → xếp hàng đợi; **không chạy
 đồng thời** (nguy cơ xung đột code khi nhiều task chạy cùng repo).
 
-- [x] **B.1 `task_queue.py`** (`auto-dev/tools/`) — `scan` (task eTask chưa vào queue) ·
+- [x] **B.1 `task_queue.py`** (`auto-dev/tools/`) — `scan` (task aTask chưa vào queue) ·
       `intake` (context_pack → scout → recall → clarify, lưu artifact vào item) · `answer`
-      (`--accept-proposed` one-click; **mặc định sync brief lên eTask** [WRITE] để bàn giao
+      (`--accept-proposed` one-click; **mặc định sync brief lên aTask** [WRITE] để bàn giao
       được cho người khác, `--no-sync` để bỏ) · `next`/`done` (khoá TUẦN TỰ **theo luồng** —
       owner mặc định `task_resolver`, người làm tay không bị chặn) · `release`/`requeue`/`remove`.
       Item ở `work/queue/items/<qid>.json`, lock ở `lock_<owner>.json`.
@@ -69,18 +69,18 @@ Yêu cầu mới: đọc task từ eTask → làm giàu + làm rõ yêu cầu �
       không bao giờ chạy 2 task tự động cùng lúc trên repo.
 - [x] **B.2 Thin guard** — mô tả rỗng + không comment/checklist/subtask → ép
       `needs_clarification` (heuristic clarify bị khung markdown của pack che mắt; phát hiện
-      qua test intake task eTask thật).
+      qua test intake task aTask thật).
 - [x] **B.3 Tests + docs** — 18 unit test mới (71/71 xanh); `cookbook/intake.md` § Queue,
-      `SKILL.md` tool row, slash command `/etask-queue`. Đã verify sống: `scan` (20 task),
-      `intake` task thật (pack + scout trên clone etask, clarify heuristic).
+      `SKILL.md` tool row, slash command `/atask-queue`. Đã verify sống: `scan` (20 task),
+      `intake` task thật (pack + scout trên clone atask, clarify heuristic).
 - [x] **B.4 Batch tự chạy** ✅ (2026-07-06) — `task_resolver --enqueue`: review loạt task,
-      NOT_FIXED → intake vào queue (ưu tiên map từ priority eTask 1..4 → 1..3).
-      `queue_worker.py run`: tuần tự `next` → spawn agent `/etask-run <id> batch` →
+      NOT_FIXED → intake vào queue (ưu tiên map từ priority aTask 1..4 → 1..3).
+      `queue_worker.py run`: tuần tự `next` → spawn agent `/atask-run <id> batch` →
       done/park; agent chết giữa chừng → tự gỡ lock + fail, không kẹt hàng.
-      **`/etask-run` § BATCH**: mode=auto (gate người → gate bằng chứng; kẹt = PARK +
+      **`/atask-run` § BATCH**: mode=auto (gate người → gate bằng chứng; kẹt = PARK +
       báo Telegram không chờ), **merge LOCAL --no-ff vào nhánh gốc, KHÔNG tạo MR remote**
       — task sau checkout từ gốc đã chứa task trước; push/MR cả đợt do người quyết sau.
-      Còn lại: gộp `etask_watch` (nhánh EXECUTE giờ trùng với luồng này — nên rút gọn).
+      Còn lại: gộp `atask_watch` (nhánh EXECUTE giờ trùng với luồng này — nên rút gọn).
       9 test mới (130/130 xanh; test bắt được bug dry-run release-loop thật).
 - [x] **B.7 `autopilot.py watch` — chế độ POLL** ✅ (2026-07-06) — `run` là one-pass
       (chạy 1 lượt rồi thoát — người dùng tưởng "bị tắt"); thêm `watch --interval 600`:
@@ -91,14 +91,14 @@ Yêu cầu mới: đọc task từ eTask → làm giàu + làm rõ yêu cầu �
 - [x] **B.6 `autopilot.py` — MỘT LỆNH cho tất cả** ✅ (2026-07-06, theo yêu cầu:
       "chỉ chạy 1 lệnh, còn lại tự động, Telegram chỉ hỏi khi cần confirm/làm rõ") —
       `run --resolve-existing`: (1) resolver `--once --enqueue` review loạt;
-      (2) prep từng item bằng agent `/etask-prep` (resume-aware: plan/gate cũ dùng lại,
+      (2) prep từng item bằng agent `/atask-prep` (resume-aware: plan/gate cũ dùng lại,
       chỉ wait); người chưa trả lời → ghi `waiting_human`, KHÔNG chặn; (3) worker thực
       thi các task đã approved. Tổng kết + nhắc chờ qua Telegram. Đã dọn state cũ
       (queue/baseline/artifacts demo) để đọc lại toàn bộ. 132/132 xanh.
 - [x] **B.5 TÁCH 2 LUỒNG: chuẩn bị ≠ thực thi** ✅ (2026-07-06, theo góp ý người dùng) —
-      state mới `approved`: `ready` (đủ thông tin) → **/etask-prep** (plan + verify_gen +
+      state mới `approved`: `ready` (đủ thông tin) → **/atask-prep** (plan + verify_gen +
       người duyệt after_plan qua Telegram, KHÔNG đụng code, chạy song song nhiều task) →
-      `task_queue.py approve <qid> --plan --verify` → `approved` → **/etask-run** (thuần
+      `task_queue.py approve <qid> --plan --verify` → `approved` → **/atask-run** (thuần
       code: checkout → implement theo plan ĐÃ DUYỆT → fix_loop verify → merge local;
       không cần người trong lúc chạy, kẹt = PARK). `next` CHỈ nhặt `approved`;
       `requeue` task từng duyệt → quay thẳng `approved`. 130/130 xanh.
@@ -124,16 +124,16 @@ thật và soi dữ liệu. Đã đóng 3 khớp thiếu:
       profile) → engine/host/port/db/schema/user/password + server.port/base_url.
       `project_config.resolve` tự **gap-fill** DB từ Spring khi registry thiếu (registry thắng
       từng khoá) → probe/flow_check hit đúng DB app đang dùng, không cần khai lại.
-- [x] **C.4 Tests + docs** — 19 test mới (95/95 xanh); verify sống trên repo etask thật
-      (JHipster: mysql `idaas_etask@10.14.121.8`, port 8271). Docs: pipeline.md §2 (sinh+require)
+- [x] **C.4 Tests + docs** — 19 test mới (95/95 xanh); verify sống trên repo atask thật
+      (JHipster: mysql DB dev dùng chung nội bộ). Docs: pipeline.md §2 (sinh+require)
       + §4 (đường verify chính thức) + §5 (`ac-map --verify-json`), SKILL.md, stack-verify.md.
 - [x] **C.5 Đầu-ra-của-task = API bị ảnh hưởng** ✅ (2026-07-06) — `verify_gen --root <clone_dir>`:
       bóc endpoint từ controller trong `<target_files>` (regex `@*Mapping` + prefix cấp class;
       sửa `XxxService` → tự dò `XxxController`/`XxxResource` cùng tên) → đưa vào prompt
       "PHẢI gọi các API này" + cảnh báo `endpoints_untested` khi kịch bản bỏ sót.
-      Verify sống: bóc đúng 24 endpoint thật từ `TaskResource.java` của etask.
+      Verify sống: bóc đúng 24 endpoint thật từ `TaskResource.java` của atask.
 - [x] **C.6 `app_run_cmd` trong registry** ✅ (2026-07-06) — `local_app.py start` ưu tiên
-      `--cmd` > `projects.json.app_run_cmd` > mvn default; etask đã khai lệnh
+      `--cmd` > `projects.json.app_run_cmd` > mvn default; atask đã khai lệnh
       java+PropertiesLauncher (2 ngõ cụt mvnw/exec:java ghi ở `_app_run_note` + memory).
       Verify sống: start không cần `--cmd` → app UP → stop sạch.
 - [x] **C.7 `fix_loop.py` — chạy local lỗi thì TỰ SỬA CODE** ✅ (2026-07-06) —
@@ -147,7 +147,7 @@ thật và soi dữ liệu. Đã đóng 3 khớp thiếu:
 - [x] **C.8a Clarify qua Telegram, trả lời TỰ DO** ✅ (2026-07-06, theo yêu cầu người dùng:
       "có các mục để tôi viết comment phản hồi, đừng chỉ cho option chọn") —
       `task_queue.py ask-tg <qid>` gửi mục đánh số (❗ blocking) + đề xuất;
-      `reply <qid> --text "1: ok; 2: dùng 409..."` parse comment tự do → brief → sync eTask
+      `reply <qid> --text "1: ok; 2: dùng 409..."` parse comment tự do → brief → sync aTask
       → xác nhận ngược Telegram. `mark <qid> --to <statusType>` chuyển trạng thái task
       (tra status-ID theo-list, chống mượn ID chéo list). Đã gửi thật task
       `00002AeIAqUpRPmvKAViMg1J` (5 mục). 9 test mới (121/121 xanh).
@@ -157,10 +157,10 @@ thật và soi dữ liệu. Đã đóng 3 khớp thiếu:
       chỉnh + feedback ledger). Đã gửi thật gate after_plan của task `...Mg1J` (5 mục, gồm cả
       quyết định mark processing). pipeline.md đổi kênh duyệt mặc định sang Telegram.
       3 test mới (124/124 xanh).
-- [x] **C.8c `tg_gate wait/reply` + `/etask-run`** ✅ (2026-07-06) — pipeline THẬT SỰ
+- [x] **C.8c `tg_gate wait/reply` + `/atask-run`** ✅ (2026-07-06) — pipeline THẬT SỰ
       chờ được: `wait` poll reply-file (+ `--poll-updates` getUpdates trực tiếp khi bridge
       tắt), `reply` cho bridge/người ghi nhận tin; timeout → tạm dừng, gọi lại wait.
-      **`/etask-run <task_id>`** = entry DUY NHẤT cho cả luồng (intake → clarify-tg →
+      **`/atask-run <task_id>`** = entry DUY NHẤT cho cả luồng (intake → clarify-tg →
       lock+mark → plan+verify_gen → gate after_plan-tg → implement → fix_loop (gate
       fix_diff-tg) → before_mr-tg → MR → before_notify-tg → mark+notify → done).
       126/126 test xanh.
@@ -177,8 +177,8 @@ Mục tiêu: daemon sống đủ lâu để sinh dữ liệu. Làm trước vì 
 - [x] **0.1 Supervisor loop + exponential backoff** ✅ (2026-07-05)
       - `daemon_common.py` (`dev-automation/tools/`): `supervise()` + `Backoff` (1s→×1.5→trần 60s,
         reset khi thành công) + `guard()`/`classify_status()` + `DaemonFatal`/`DaemonTransient`.
-      - **REST poller** (`mr_watch`, `etask_watch`): loop `sleep(interval)` cố định → thay bằng
-        `supervise`; `401/403` = **dừng + báo** (etask alert Telegram), `0/429/5xx`/crash = backoff.
+      - **REST poller** (`mr_watch`, `atask_watch`): loop `sleep(interval)` cố định → thay bằng
+        `supervise`; `401/403` = **dừng + báo** (atask alert Telegram), `0/429/5xx`/crash = backoff.
       - **WS listener** (`group_watch`, `task_digest`): vốn đã có reconnect-backoff + `tokens.refresh`
         → thêm health_log + fatal-log khi token chết (không rewrite, tránh rủi ro).
       - **`telegram_bridge`**: vòng getUpdates `sleep(3)` cố định → backoff + phân biệt code 401/403.
@@ -203,7 +203,7 @@ Lưu trữ: `work/feedback/<project>.jsonl` — append-only, **không bao giờ 
 ### Schema record
 
 ```json
-{"ts": "2026-07-05T10:00:00Z", "run_id": "etask-123", "project": "etask",
+{"ts": "2026-07-05T10:00:00Z", "run_id": "atask-123", "project": "atask",
  "stage": "plan", "task_type": "bugfix", "tier": "standard",
  "agent_output": "<tóm tắt/hash đề xuất của agent>",
  "human_action": "edited | approved | rejected",
@@ -234,7 +234,7 @@ Lưu trữ: `work/feedback/<project>.jsonl` — append-only, **không bao giờ 
 
 ## Phase 2 — Recall: bơm lịch sử vào lần chạy sau (~2–3 ngày)
 
-- [x] **2.1** `feedback.py recall --stage plan --project etask --type bugfix --limit 5` ✅
+- [x] **2.1** `feedback.py recall --stage plan --project atask --type bugfix --limit 5` ✅
       → correction liên quan nhất; lọc project → stage → task_type; chấm điểm keyword overlap + tag,
       mới nhất ưu tiên (stdlib). Xuất luôn khối `<past_corrections>` sẵn để chèn.
 - [~] **2.2** Nối vào điểm tiêu thụ:
@@ -260,7 +260,7 @@ Raw records sẽ phình và nhiễu → chưng cất định kỳ thành quy t�
       human-in-the-loop áp cho cả việc học, tránh học sai từ correction nhiễu.
 - [ ] **3.3** `grounding.py` + `review_gate.py` nạp `conventions/<project>.md` mặc định
       → quy tắc sống lâu dài, không tốn recall.
-- [ ] **3.4** Trigger: đếm record mới trong vòng poll của `etask_watch`/`mr_watch`,
+- [ ] **3.4** Trigger: đếm record mới trong vòng poll của `atask_watch`/`mr_watch`,
       hoặc chạy tay hàng tuần.
 
 ---
@@ -274,7 +274,7 @@ Không đo thì không biết vòng lặp có hoạt động.
       và cắt theo tuần/tháng.
 - [ ] **4.2** Digest tuần đẩy qua Telegram (tái dùng `bg_notify` / `tg_api`).
 - [ ] **4.3 Graduated autonomy** — hoà giải human-in-loop ↔ tự động:
-      - Lát cắt (vd `etask + bugfix + tier=standard`) có tỉ lệ duyệt-thẳng ≥ 90% trên 20 lần
+      - Lát cắt (vd `atask + bugfix + tier=standard`) có tỉ lệ duyệt-thẳng ≥ 90% trên 20 lần
         gần nhất → hệ thống **đề xuất** nâng lên `mode=auto`, bạn xác nhận.
       - Lát bị sửa nhiều → tự hạ về `checkpoint`.
       - Mức tin cậy **kiếm bằng dữ liệu**, không đặt cứng.
@@ -290,11 +290,11 @@ Không đo thì không biết vòng lặp có hoạt động.
       `✅ Duyệt / ✏️ Sửa (gõ note) / ❌ Bác` — duyệt từ điện thoại; mỗi lần bấm = 1 feedback record
       (Phase 1 hưởng lợi tự nhiên). Checkpoint không mất đi, chỉ rẻ hơn.
 - [ ] **5.2 Trả nợ docs-vs-code** (từ audit):
-      - team-registry: chọn **wire thật** (`etask_watch` gọi trực tiếp `team.py match`)
+      - team-registry: chọn **wire thật** (`atask_watch` gọi trực tiếp `team.py match`)
         hoặc **xoá claim** ở `team-registry/SKILL.md:43-46`.
-      - Nhánh ASSIGN của `etask_watch`: docs nói rõ "chỉ gợi ý, không assign thật" (API limit).
-      - `etask SKILL.md:192` vs `task_resolver.py` (claim dùng search_tasks nhưng không import).
-      - Viết mục "chọn search tool nào" (search vs governed_search vs analytics) vào cookbook etask.
+      - Nhánh ASSIGN của `atask_watch`: docs nói rõ "chỉ gợi ý, không assign thật" (API limit).
+      - `atask SKILL.md:192` vs `task_resolver.py` (claim dùng search_tasks nhưng không import).
+      - Viết mục "chọn search tool nào" (search vs governed_search vs analytics) vào cookbook atask.
 - [ ] **5.3 Dọn dẹp**: GC `temp/mr_reviewed.json` (xoá entry MR đã đóng >30 ngày);
       xác nhận số phận `bg_notify.py`, `doctor.py`, `kafka_ui.py` (dùng thật → ghi docs, không → xoá).
 

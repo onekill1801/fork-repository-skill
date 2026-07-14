@@ -16,11 +16,11 @@ else the current working directory.
 Zero external dependencies — Python stdlib only.
 
 Usage:
-    python test_runner.py run --project etask --kind test
-    python test_runner.py run --cmd "mvn -B test" --cwd /home/me/work/etask
+    python test_runner.py run --project atask --kind test
+    python test_runner.py run --cmd "mvn -B test" --cwd /home/me/work/atask
     python test_runner.py run --cwd . --auto
     python test_runner.py detect --cwd .
-    python test_runner.py detect --project etask
+    python test_runner.py detect --project atask
 
 Output: a single JSON object on stdout.
     {"passed": true, "exit_code": 0, "kind": "test", "command": "...",

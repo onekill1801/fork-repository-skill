@@ -1,6 +1,6 @@
 # Intake — nhận yêu cầu vào pipeline
 
-Hai nguồn đã chọn: **Azure DevOps** và **eTask (FIS)**. Cộng nguồn **trực tiếp** (người dùng
+Hai nguồn đã chọn: **Azure DevOps** và **aTask**. Cộng nguồn **trực tiếp** (người dùng
 mô tả yêu cầu / gõ `/auto-dev`). Đây là GĐ1 — intake **theo lệnh**, người dùng kích hoạt.
 Poll tự động (cron) là GĐ2, ghi chú ở cuối.
 
@@ -23,26 +23,26 @@ Map sang run-log:
 
 Đa project: prefix `AZURE_DEVOPS_PROJECT=<...>` mỗi lệnh.
 
-## C. eTask (FIS)
+## C. aTask
 
 ```bash
-cd .claude/skills/etask-automation/tools
+cd .claude/skills/atask-automation/tools
 python search.py my-tasks              # task của tôi
 python tasks.py get <task_id>          # chi tiết
 ```
-Map: `--task` = eTask task id, `--type` suy từ nhãn/loại task, `--project` khớp registry.
-> eTask không gắn trực tiếp với GitLab repo → khi tạo branch/MR vẫn dùng `gitlab_api.py`
+Map: `--task` = aTask task id, `--type` suy từ nhãn/loại task, `--project` khớp registry.
+> aTask không gắn trực tiếp với GitLab repo → khi tạo branch/MR vẫn dùng `gitlab_api.py`
 > với `GITLAB_PROJECT_ID` của project tương ứng trong `./work/projects.json`.
 
 ## Context pack — gom ngữ cảnh đã có (TRƯỚC clarify)
 
-Task trên eTask/Azure hay mô tả sơ sài, nhưng yêu cầu thật thường nằm ở **comment / checklist /
-subtask / task cha** (eTask) hoặc **acceptance criteria / root cause / solution** (Azure). Đọc mỗi
+Task trên aTask/Azure hay mô tả sơ sài, nhưng yêu cầu thật thường nằm ở **comment / checklist /
+subtask / task cha** (aTask) hoặc **acceptance criteria / root cause / solution** (Azure). Đọc mỗi
 `description` = tự bỏ đói. Gom hết vào một *context pack* rồi dùng nó làm `--desc` cho clarify + debate:
 
 ```bash
 cd .claude/skills/auto-dev/tools
-python context_pack.py build --source <etask|azure> --task <task_id>
+python context_pack.py build --source <atask|azure> --task <task_id>
 #   -> temp/runs/<src>-<id>_context.md  + JSON {ac_seeds, signals}
 #   [--no-comments|--no-checklist|--no-subtasks]  bỏ bớt fetch nếu chậm/không cần
 ```
@@ -159,18 +159,18 @@ lệnh test trước khi tiếp tục (đừng đoán).
 Nhiều run tự động cùng lúc trên một repo = nguy cơ giẫm branch/worktree của nhau.
 `task_queue.py` tách intake (rẻ, làm hàng loạt) khỏi xử lý (đắt, **một-task-một-lúc
 TRÊN LUỒNG `task_resolver`** — lock theo owner, KHÔNG chặn người làm tay).
-`task_resolver.py` claim/release đúng lock này quanh mỗi task nó xử lý. Slash: `/etask-queue`.
+`task_resolver.py` claim/release đúng lock này quanh mỗi task nó xử lý. Slash: `/atask-queue`.
 
 ```bash
 cd .claude/skills/auto-dev/tools
-python task_queue.py scan --limit 10                     # task eTask của tôi chưa vào queue (read-only)
-python task_queue.py intake --source etask --task <id> --project <P> --type bugfix --backend claude
+python task_queue.py scan --limit 10                     # task aTask của tôi chưa vào queue (read-only)
+python task_queue.py intake --source atask --task <id> --project <P> --type bugfix --backend claude
 #   = context_pack -> scout -> feedback recall -> clarify, lưu artifact paths vào item.
-#   [--post-questions]  [WRITE] comment câu hỏi blocking + proposed lên task eTask -> confirm trước.
+#   [--post-questions]  [WRITE] comment câu hỏi blocking + proposed lên task aTask -> confirm trước.
 python task_queue.py list [--state ready]                # tổng quan (priority -> tuổi) + locks theo owner
 python task_queue.py answer <qid> --accept-proposed      # hoặc --answers-file ans.json -> brief, item ready
-#   answer MẶC ĐỊNH đồng bộ brief lên eTask ([WRITE] comment "Yêu cầu đã làm rõ") -> task đủ
-#   ngữ cảnh để BÀN GIAO cho người khác (assign qua /etask-triage). --no-sync để bỏ.
+#   answer MẶC ĐỊNH đồng bộ brief lên aTask ([WRITE] comment "Yêu cầu đã làm rõ") -> task đủ
+#   ngữ cảnh để BÀN GIAO cho người khác (assign qua /atask-triage). --no-sync để bỏ.
 python task_queue.py next [--owner task_resolver]        # lấy task đầu hàng + giữ lock CỦA LUỒNG đó
 python task_queue.py done <qid> --result ok|fail         # nhả lock -> task kế của luồng mới chạy
 python task_queue.py release [--owner ...]               # cứu lock kẹt (phiên chết giữa chừng)

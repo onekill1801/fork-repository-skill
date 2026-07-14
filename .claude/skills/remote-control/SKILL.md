@@ -6,7 +6,7 @@ description: Điều khiển agent từ xa qua Telegram và fan-out lệnh ra c�
 # Remote Control (Telegram + SSH)
 
 Hai mặt phẳng:
-- **Control plane — Telegram bridge**: nhắn tin → `claude -p` headless trong repo → trả kết quả. Full agent: mọi skill (auto-dev, etask, gitlab…) dùng được từ điện thoại.
+- **Control plane — Telegram bridge**: nhắn tin → `claude -p` headless trong repo → trả kết quả. Full agent: mọi skill (auto-dev, atask, gitlab…) dùng được từ điện thoại.
 - **Action plane — SSH fan-out**: chạy lệnh trên các máy LAN trong `work/hosts.json` (allowlist, key-based).
 
 **Mô hình tin cậy: full agent + chế độ DUYỆT (cấu hình được).** Mặc định (`TELEGRAM_AUTO_APPROVE=read,file`):
@@ -90,7 +90,7 @@ không còn agent sống để báo về → người dùng không nhận đư�
 kết quả** (✅/❌ + nhãn + thời lượng + đuôi log) thẳng về chat Telegram. Agent in `{"detached":
 true,…}`, báo "đã chạy nền, sẽ nhắn khi xong" rồi kết thúc lượt — KHÔNG block, KHÔNG hẹn suông.
 ```
-python bg_notify.py --label "Build dev etask" -- python jenkins.py build --project etask --env dev --wait
+python bg_notify.py --label "Build dev atask" -- python jenkins.py build --project atask --env dev --wait
 ```
 - Chat đích lấy từ env `CLAUDE_TG_CHAT_ID` (bridge set sẵn cho agent). Tự bật tách rời khi
   `CLAUDE_TG_BRIDGE=1`; chạy tay ngoài bridge thì mặc định đồng bộ (debug), không có chat → chỉ ghi log.

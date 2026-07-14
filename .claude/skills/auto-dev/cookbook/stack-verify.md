@@ -32,7 +32,7 @@ python probe_db.py query --engine postgres --sql "..." --dry-run   # xem lệnh,
 # DB pre-flight — assert kết nối ĐÚNG database (cho env cô lập / isolated DB).
 # Isolation chỉ ĐỔI TÊN db trong config, KHÔNG tạo db; check-db xác nhận db tồn tại
 # VÀ đang nối đúng db kỳ vọng — sai/thiếu db trả {"error":true} (không tính là pass).
-python probe_db.py check-db --engine postgres --expect-db etask_task_123
+python probe_db.py check-db --engine postgres --expect-db atask_task_123
 
 # Redis — kiểm cache
 python probe_redis.py get user:42 --expect-exists
@@ -68,8 +68,8 @@ python jenkins.py jobs                                        # đọc: liệt k
 > tác vụ dài (jenkins build, compile, test…) hãy bọc bằng `bg_notify.py` — nó tách rời
 > khỏi `claude -p`, chạy tới khi xong rồi TỰ gửi kết quả (✅/❌ + thời lượng) về Telegram:
 > ```
-> python bg_notify.py --label "Build dev etask" -- python jenkins.py build --project etask --env dev --wait
-> python bg_notify.py --label "Compile/test etask" -- python test_runner.py run --project etask --kind test
+> python bg_notify.py --label "Build dev atask" -- python jenkins.py build --project atask --env dev --wait
+> python bg_notify.py --label "Compile/test atask" -- python test_runner.py run --project atask --kind test
 > ```
 > In ngay `{"detached": true, …}` → báo người dùng "đã chạy nền, sẽ nhắn khi xong" rồi
 > KẾT THÚC lượt. (Tự bật khi env `CLAUDE_TG_BRIDGE=1`; chạy tay thì mặc định đồng bộ.)
@@ -83,9 +83,9 @@ Sau khi viết feature/fix, sinh **Postman Collection** để FE/tester import l
 chỉnh sửa). Dùng khi backend **không có Swagger/OpenAPI** — tool parse controller Spring.
 
 ```bash
-python postman_gen.py --src <thư mục source Spring> --base-url https://etask.dev
-python postman_gen.py --project etask          # src = clone_dir trong ./work/projects.json
-python postman_gen.py --src ./work/etask --out temp/etask.postman_collection.json
+python postman_gen.py --src <thư mục source Spring> --base-url https://atask.dev
+python postman_gen.py --project atask          # src = clone_dir trong ./work/projects.json
+python postman_gen.py --src ./work/atask --out temp/atask.postman_collection.json
 ```
 
 Sinh ra file `*.postman_collection.json` (mặc định trong `temp/`): folder theo controller, mỗi
@@ -137,32 +137,32 @@ chạy scenario thì stop. Vòng đầy đủ: **build/run → gọi API → the
 ```bash
 cd .claude/skills/dev-automation/tools
 # 1) start (detached, log vào temp/local_apps/<name>.log). --project lấy cwd = clone_dir.
-python local_app.py start --name etask --project etask \
+python local_app.py start --name atask --project atask \
   --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
 # 2) chờ tới khi UP (JHipster: /management/health -> {"status":"UP"}); fail nhanh nếu app chết
-python local_app.py wait-health --name etask \
+python local_app.py wait-health --name atask \
   --url http://localhost:8271/management/health --timeout 300 --expect-text UP
-python local_app.py logs --name etask --tail 80      # xem log boot nếu lỗi
+python local_app.py logs --name atask --tail 80      # xem log boot nếu lỗi
 # 3) chạy kịch bản e2e: gọi API tạo task -> SELECT bảng task xác nhận row
-API_BASE_URL=http://localhost:8271 API_AUTH_HEADER="X-eTask-PAT: <PAT>" \
-  python flow_check.py --file ../../auto-dev/scenarios/etask-create-task-e2e.json \
-  --project etask --env dev --var listId=<list_task_id_thật> --allow-prod
+API_BASE_URL=http://localhost:8271 API_AUTH_HEADER="X-aTask-PAT: <PAT>" \
+  python flow_check.py --file ../../auto-dev/scenarios/atask-create-task-e2e.json \
+  --project atask --env dev --var listId=<list_task_id_thật> --allow-prod
 # (--allow-prod CHỈ vì step có ghi; xem cảnh báo DB bên dưới)
 # 4) stop (kill cả cây tiến trình mvn -> java)
-python local_app.py stop --name etask
+python local_app.py stop --name atask
 ```
 
-Mẫu: `auto-dev/scenarios/etask-create-task-e2e.json` (POST `/api/ai/execute` `create_task` → SELECT
+Mẫu: `auto-dev/scenarios/atask-create-task-e2e.json` (POST `/api/ai/execute` `create_task` → SELECT
 `task` → dọn `delete_task`). Sửa JSONPath `$.data.id` cho khớp response thật (chạy riêng step 1 xem JSON trước).
 
-> ⚠️ **DB & môi trường (BẮT BUỘC đọc).** Profile `dev` của etask trỏ datasource vào **DB dev DÙNG
-> CHUNG** (`10.14.121.8/idaas_etask`) và cần eureka/redis/ES/kafka/UAA reachable. Chạy e2e có GHI
-> theo cách này **làm bẩn data chung** và phụ thuộc cả hệ IDaaS. **Khuyến nghị**: trỏ app + probe
+> ⚠️ **DB & môi trường (BẮT BUỘC đọc).** Profile `dev` của atask trỏ datasource vào **DB dev DÙNG
+> CHUNG** (vd `10.x.x.x/atask_dev`) và cần eureka/redis/ES/kafka/UAA reachable. Chạy e2e có GHI
+> theo cách này **làm bẩn data chung** và phụ thuộc cả hệ backend dùng chung. **Khuyến nghị**: trỏ app + probe
 > vào **DB cục bộ/cô lập** trước khi chạy ghi:
 > ```bash
 > # ví dụ ép datasource sang MySQL local (qua env Spring), rồi guard đúng DB trước khi test:
-> python local_app.py start --name etask --project etask --env "SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/etask_local?useSSL=false" --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
-> DB_HOST=localhost DB_NAME=etask_local python probe_db.py check-db --project etask --env dev --expect-db etask_local
+> python local_app.py start --name atask --project atask --env "SPRING_DATASOURCE_URL=jdbc:mysql://localhost:3306/atask_local?useSSL=false" --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
+> DB_HOST=localhost DB_NAME=atask_local python probe_db.py check-db --project atask --env dev --expect-db atask_local
 > ```
 > `check-db` đảm bảo probe (và mặc nhiên app) đang ở DB cô lập — sai DB trả `{"error":true}`, không
 > tính pass. Chỉ dùng `--allow-prod` khi thật sự cần ghi vào env protected (xác nhận thủ công).
@@ -193,13 +193,13 @@ Khai báo trong `./work/projects.json` (mẫu: `workspace/projects.sample.json`)
 Mọi probe + `flow_check` nhận `--project <name> --env <env>`:
 
 ```bash
-python probe_db.py query --engine postgres --sql "select ..." --project etask --env uat --expect-rows 1
-python probe_redis.py get user:42 --project etask --env dev --expect-exists
-python flow_check.py --file <scenario> --project etask --env sandbox
-python jenkins.py build --project etask --env dev --wait    # job lấy từ stack.jenkins.job
+python probe_db.py query --engine postgres --sql "select ..." --project atask --env uat --expect-rows 1
+python probe_redis.py get user:42 --project atask --env dev --expect-exists
+python flow_check.py --file <scenario> --project atask --env sandbox
+python jenkins.py build --project atask --env dev --wait    # job lấy từ stack.jenkins.job
 ```
 
-Kịch bản tự gắn bằng field gốc `"project":"etask"` và `"env":"dev"` (cờ CLI đè field này).
+Kịch bản tự gắn bằng field gốc `"project":"atask"` và `"env":"dev"` (cờ CLI đè field này).
 Không truyền `--env` mà project có nhiều env và **không có** `default_env` → tool báo lỗi rõ
 (liệt kê env hợp lệ), **không đoán** env.
 
@@ -227,16 +227,16 @@ thật sự cần và có `--allow-prod` (tương đương xác nhận thủ cô
 `DB_HOST=... python probe_db.py ...` inline vẫn thắng để override tạm.
 
 ```json
-"etask": {
+"atask": {
   "default_env": "dev",
   "protected_envs": ["prod", "production"],
-  "stack":   { "db": {"engine":"postgres","port":"5432","user":"app","name":"etask"},
-               "redis": {"port":"6379","db":"0"}, "jenkins": {"job":"team/job/etask-ci"} },
+  "stack":   { "db": {"engine":"postgres","port":"5432","user":"app","name":"atask"},
+               "redis": {"port":"6379","db":"0"}, "jenkins": {"job":"team/job/atask-ci"} },
   "environments": {
     "local": { "api_base_url":"http://localhost:8080", "db":{"host":"localhost"}, "redis":{"host":"localhost"}, "kafka_rest_url":"http://localhost:8082" },
-    "dev":   { "api_base_url":"https://etask.dev", "db":{"host":"pg.dev"}, "redis":{"host":"redis.dev"}, "kafka_rest_url":"http://kafka-rest.dev:8082" },
-    "uat":   { "api_base_url":"https://etask.uat", "db":{"host":"pg.uat"} },
-    "prod":  { "api_base_url":"https://etask.prod", "db":{"host":"pg.prod"} }
+    "dev":   { "api_base_url":"https://atask.dev", "db":{"host":"pg.dev"}, "redis":{"host":"redis.dev"}, "kafka_rest_url":"http://kafka-rest.dev:8082" },
+    "uat":   { "api_base_url":"https://atask.uat", "db":{"host":"pg.uat"} },
+    "prod":  { "api_base_url":"https://atask.prod", "db":{"host":"pg.prod"} }
   }
 }
 ```
@@ -254,5 +254,5 @@ thật sự cần và có `--allow-prod` (tương đương xác nhận thủ cô
 - Kafka: hai cơ chế đã hỗ trợ — **Confluent REST Proxy** (`probe_kafka.py`, produce+consume,
   `KAFKA_REST_URL`) và **Provectus Kafka UI** (`kafka_ui.py`, đọc + produce, login form
   `KAFKA_UI_URL/USER/PASSWORD`). Chọn theo hạ tầng thật; hạ tầng khác nữa thì bổ sung probe.
-- FPT-chat notification: **chưa làm** (hoãn theo quyết định). Khi cần, thêm `fpt_chat.py`
+- TChat notification: **chưa làm** (hoãn theo quyết định). Khi cần, thêm `tchat.py`
   theo pattern `notifier.py`.

@@ -7,7 +7,7 @@ Phủ phần cơ chế queue (không gọi mạng/agent):
      lần 2 cùng owner bị từ chối; owner KHÁC không bị chặn; `done` nhả lock; `release`
      cứu lock kẹt; helper try_claim/release_claim (dùng chung với task_resolver.py).
   3. answer — --accept-proposed gấp `proposed` thành brief, item sang ready;
-     source != etask thì KHÔNG sync (không đụng mạng).
+     source != atask thì KHÔNG sync (không đụng mạng).
   4. requeue/remove — chỉ requeue từ failed/done.
 No pip deps. Enrichment (context_pack/scout) KHÔNG test ở đây vì cần API/clone thật.
 """
@@ -225,19 +225,19 @@ class AnswerSyncTest(QueueBase):
         task_queue._save(item)
         out = answer("manual-t1", accept_proposed=True, no_sync=False)
         self.assertTrue(out["ok"])
-        self.assertIsNone(out.get("brief_synced"))  # source=manual -> không đụng eTask
+        self.assertIsNone(out.get("brief_synced"))  # source=manual -> không đụng aTask
 
 
 class MarkStatusTest(QueueBase):
-    """mark: tra status-ID theo-list rồi update — mock _etask_tool, không mạng."""
+    """mark: tra status-ID theo-list rồi update — mock _atask_tool, không mạng."""
 
     def setUp(self):
         super().setUp()
-        add("t1", source="etask")
+        add("t1", source="atask")
         # add() dùng qid = source-task
-        self.qid = "etask-t1"
+        self.qid = "atask-t1"
         self.calls = []
-        self._orig = task_queue._etask_tool
+        self._orig = task_queue._atask_tool
 
         def fake(script, cli_args, timeout=60):
             self.calls.append((script, cli_args))
@@ -252,10 +252,10 @@ class MarkStatusTest(QueueBase):
             if script == "tasks.py" and cli_args[0] == "update":
                 return {"success": True}
             return {"success": True}
-        task_queue._etask_tool = fake
+        task_queue._atask_tool = fake
 
     def tearDown(self):
-        task_queue._etask_tool = self._orig
+        task_queue._atask_tool = self._orig
         super().tearDown()
 
     def test_marks_with_status_id_of_correct_list(self):
@@ -265,7 +265,7 @@ class MarkStatusTest(QueueBase):
         upd = [c for c in self.calls if c[0] == "tasks.py" and c[1][0] == "update"][0]
         self.assertIn("S-PROC", upd[1])
         item = task_queue._load(self.qid)
-        self.assertEqual(item["etask_status"], "processing")
+        self.assertEqual(item["atask_status"], "processing")
 
     def test_unchanged_when_already_there(self):
         out = task_queue.cmd_mark(ns(qid=self.qid, to="todo", comment=None))
@@ -280,7 +280,7 @@ class MarkStatusTest(QueueBase):
         self.assertTrue(any(c[0] == "checklists.py" and c[1][0] == "add-comment"
                             for c in self.calls))
 
-    def test_non_etask_source_refused(self):
+    def test_non_atask_source_refused(self):
         add("m1")   # source=manual
         out = task_queue.cmd_mark(ns(qid="manual-m1", to="processing", comment=None))
         self.assertTrue(out["error"])
@@ -442,9 +442,9 @@ class WorkerTest(QueueBase):
         super().tearDown()
 
     def test_priority_map(self):
-        self.assertEqual(task_queue.etask_priority_to_queue("1"), 1)   # Khẩn cấp
-        self.assertEqual(task_queue.etask_priority_to_queue("4"), 3)   # Thấp
-        self.assertEqual(task_queue.etask_priority_to_queue(None), 2)  # mặc định
+        self.assertEqual(task_queue.atask_priority_to_queue("1"), 1)   # Khẩn cấp
+        self.assertEqual(task_queue.atask_priority_to_queue("4"), 3)   # Thấp
+        self.assertEqual(task_queue.atask_priority_to_queue(None), 2)  # mặc định
 
     def test_dry_run_drains_queue_in_priority_order(self):
         add("low", priority=3, approved=True)
@@ -564,7 +564,7 @@ class ResolverEnqueueNoLockTest(QueueBase):
 
     def test_enqueue_mode_ignores_busy_lock(self):
         sys.path.insert(0, os.path.abspath(os.path.join(
-            _HERE, "..", ".claude", "skills", "etask-automation", "tools")))
+            _HERE, "..", ".claude", "skills", "atask-automation", "tools")))
         import task_resolver as tr
         calls = []
         orig = (tr._ENQUEUE, tr._analyze, tr._notify, tr._my_login, tr.STATE,
@@ -573,7 +573,7 @@ class ResolverEnqueueNoLockTest(QueueBase):
         tr._analyze = lambda task, chat: ("summary [[VERDICT]] x",
                                           {"status": "not_fixed", "project": "p1",
                                            "reason": "", "assignee_name": None,
-                                           "assignee_etask_id": None, "estimate_days": 1})
+                                           "assignee_atask_id": None, "estimate_days": 1})
         tr._notify = lambda chat, text: None
         tr._my_login = lambda: "me"
         tr.STATE = os.path.join(self.tmp, "resolved.json")
@@ -588,7 +588,7 @@ class ResolverEnqueueNoLockTest(QueueBase):
              task_queue.cmd_intake) = orig
             task_queue.release_claim("task_resolver")
         self.assertEqual(len(calls), 1)          # vẫn review + enqueue dù lock bận
-        self.assertEqual(calls[0].priority, 1)   # eTask '2'=Cao -> hàng ưu tiên 1
+        self.assertEqual(calls[0].priority, 1)   # aTask '2'=Cao -> hàng ưu tiên 1
 
 
 class ThinGuardTest(unittest.TestCase):

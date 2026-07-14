@@ -7,7 +7,7 @@ Ba pha nối tiếp (mỗi pha là mảnh đã có, autopilot chỉ là keo):
   1. REVIEW   task_resolver --once --enqueue [--resolve-existing]
               -> verify-in-code từng task: FIXED hỏi đóng (nút Telegram);
                  NOT_FIXED xếp vào queue theo ưu tiên.
-  2. PREP     với từng item chưa approved: spawn agent chạy /etask-prep <id> autopilot
+  2. PREP     với từng item chưa approved: spawn agent chạy /atask-prep <id> autopilot
               -> làm rõ (hỏi Telegram khi thiếu info) -> plan -> verify -> gate
                  after_plan (Telegram) -> approve. Người CHƯA trả lời kịp -> agent
                  timeout, item giữ nguyên, autopilot đi tiếp (ping nhắc cuối phiên);
@@ -42,7 +42,7 @@ import queue_worker  # noqa: E402
 import task_queue    # noqa: E402
 
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
-_RESOLVER = os.path.join(_SKILLS, "etask-automation", "tools", "task_resolver.py")
+_RESOLVER = os.path.join(_SKILLS, "atask-automation", "tools", "task_resolver.py")
 
 
 def _log(msg):
@@ -65,7 +65,7 @@ def _phase_review(args):
 
 def _spawn_prep(task_id, timeout):
     """Một agent prep cho một task (blocking; agent tự chờ Telegram bên trong). Test seam."""
-    prompt = (f"/etask-prep {task_id} autopilot — chạy đúng .claude/commands/etask-prep.md. "
+    prompt = (f"/atask-prep {task_id} autopilot — chạy đúng .claude/commands/atask-prep.md. "
               f"Plan/gate đã tồn tại từ lần trước thì DÙNG LẠI (chỉ wait, không debate lại). "
               f"Chờ Telegram bằng tg_gate.py wait; hết giờ thì để nguyên trạng thái rồi thoát.")
     proc = subprocess.run([CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"],

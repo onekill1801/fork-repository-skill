@@ -57,7 +57,7 @@ STDLIB_TOOLS = [
     "probe_db.py (mysql + postgres via socket — no CLI)",
     "jenkins.py", "kafka_ui.py", "flow_check.py",
     "run_log.py", "postman_gen.py", "test_runner.py",
-    "etask-automation/*",
+    "atask-automation/*",
 ]
 
 

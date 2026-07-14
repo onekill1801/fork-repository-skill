@@ -12,17 +12,17 @@ State per app in <repo>/temp/local_apps/<name>.json ; logs in <name>.log.
 
 Usage:
     # 1) start (detached, logs captured); --project sets cwd from the registry clone_dir
-    python local_app.py start --name etask --project etask \
+    python local_app.py start --name atask --project atask \
         --cmd "mvn -q spring-boot:run -Dspring-boot.run.profiles=dev"
     # 2) block until healthy (JHipster: /management/health returns {"status":"UP"})
-    python local_app.py wait-health --name etask \
+    python local_app.py wait-health --name atask \
         --url http://localhost:8271/management/health --timeout 240 --expect-text UP
     # 3) inspect
-    python local_app.py status --name etask
-    python local_app.py logs   --name etask --tail 80
+    python local_app.py status --name atask
+    python local_app.py logs   --name atask --tail 80
     # 4) ... run flow_check / probe_* against localhost ...
     # 5) stop (kills the whole process tree)
-    python local_app.py stop   --name etask
+    python local_app.py stop   --name atask
 
 Output: a single JSON object.
 """
@@ -147,7 +147,7 @@ def _resolve_cmd(args, block: dict, cwd: str):
     """Run-command precedence: --cmd flag > registry `app_run_cmd` > mvn default.
 
     `app_run_cmd` in work/projects.json captures the ONE command known to boot this
-    app on this machine (e.g. etask needs jar + PropertiesLauncher: `mvn spring-boot:run`
+    app on this machine (e.g. atask needs jar + PropertiesLauncher: `mvn spring-boot:run`
     dies with Windows error=206, and a system-scope lib is missing from the fat jar) —
     so nobody has to rediscover it. Returns (cmd|None, source).
     """
@@ -317,7 +317,7 @@ def main() -> int:
                              "không cần build jar, né error=206")
     pj.add_argument("--project", help="clone_dir từ registry")
     pj.add_argument("--cwd", help="project root (đè --project)")
-    pj.add_argument("--main", required=True, help="main class, vd com.fis.etask.EtaskApp")
+    pj.add_argument("--main", required=True, help="main class, vd com.example.atask.AtaskApp")
     pj.add_argument("--profile", default=None, help="spring profile (vd dev)")
 
     args = parser.parse_args()

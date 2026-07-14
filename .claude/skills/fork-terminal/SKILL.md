@@ -65,8 +65,8 @@ AGENTIC_CODING_TOOLS: claude-code, codex-cli, gemini-cli, antigravity-cli
 - GUARDRAIL: confirm with the user before spawning (it creates branches + windows) and use
   `--dry-run` first to preview the worktree + isolation without launching a terminal.
 - EXAMPLES:
-  - "fork 3 claude agents song song cho task 5001/5002/5003 trên repo etask"
-  - "spawn an isolated claude agent for task 777 on the etask repo"
+  - "fork 3 claude agents song song cho task 5001/5002/5003 trên repo atask"
+  - "spawn an isolated claude agent for task 777 on the atask repo"
 
 ### Parsing dữ liệu Agent↔Agent (HTML/XML)
 

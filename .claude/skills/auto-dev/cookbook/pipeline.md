@@ -5,7 +5,7 @@ Pipeline đầy đủ cho một task: **Intake → (Triage) → Plan → Impleme
 state) và `.claude/skills/auto-dev/tools/` (triage / grounding / review).
 
 Quy ước trong tài liệu này:
-- `<RID>` = run_id, gợi ý `<project>-<task_id>` (vd `etask-12345`).
+- `<RID>` = run_id, gợi ý `<project>-<task_id>` (vd `atask-12345`).
 - `<P>` = tên project trong `./work/projects.json`.
 - Đặt env inline mỗi lệnh GitLab/Azure khi làm đa project (xem `dev-automation/cookbook/multi-project.md`).
 
@@ -45,7 +45,7 @@ lệnh test, rồi truyền trực tiếp qua `--cwd` / `--cmd` ở bước Test
 
 ## 1. Intake — đọc task
 
-Azure: `python azure_devops.py get <task_id>` · eTask: xem `cookbook/intake.md`.
+Azure: `python azure_devops.py get <task_id>` · aTask: xem `cookbook/intake.md`.
 Trích: tiêu đề, mô tả, repro/acceptance, severity, work item liên quan.
 
 ## 2. Plan — qua Agent Debate (tranh biện trước khi code)
@@ -233,7 +233,7 @@ Khi chưa có registry, thay `--project <P>` bằng `--cwd <dir> --cmd "<lệnh 
 python spring_config.py read --project <P> --env dev          # xem db + base_url app
 python local_app.py start --name <P> --project <P>            # lệnh chạy: --cmd > registry
 #   `app_run_cmd` trong projects.json = lệnh ĐÃ BIẾT chạy được app này trên máy này
-#   (vd etask: java + PropertiesLauncher vì mvn spring-boot:run chết error=206) > mvn default
+#   (vd atask: java + PropertiesLauncher vì mvn spring-boot:run chết error=206) > mvn default
 python local_app.py wait-health --name <P>
 # 1) đúng DB chưa (nhất là worktree đã isolate):
 python probe_db.py check-db --engine <mysql|postgres> --project <P> --env dev --expect-db "<db>"
@@ -327,7 +327,7 @@ Người thật sẽ thấy notification → confirm trước:
 python run_log.py checkpoint <RID> before_notify approved
 python notifier.py mr-created <task_id> "<mr_url>"
 python azure_devops.py state <task_id> Resolved
-# Task nguồn eTask: chuyển trạng thái + đính link MR lên task [WRITE]:
+# Task nguồn aTask: chuyển trạng thái + đính link MR lên task [WRITE]:
 python ../../auto-dev/tools/task_queue.py mark <qid> --to approved --comment "MR: <mr_url>"
 #   (--to theo workflow của bạn: processing khi BẮT ĐẦU làm — gọi ngay sau `next`;
 #    approved/"chờ phê duyệt" khi MR xong; completed khi task được nghiệm thu)

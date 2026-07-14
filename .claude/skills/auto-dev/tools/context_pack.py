@@ -2,22 +2,22 @@
 """Intake context pack — enrich a thin/vague task with the context that already exists.
 
 Root cause of low auto-dev accuracy on vague tasks: the pipeline planned from the
-task's `title` + `description` alone. But on eTask (and Azure DevOps) the real
+task's `title` + `description` alone. But on aTask (and Azure DevOps) the real
 requirements usually live *elsewhere* — in the **comments**, the **checklist**, the
 **subtasks**, the **parent task**, and (Azure) the **acceptance criteria / root cause
 / solution** fields. This tool gathers all of it into one Markdown "context pack" that
 becomes the `--desc` for `clarify.py` and `debate_engine.py`, and emits `ac_seeds`
 (checklist items + explicit AC) ready for `run_log.py ac-add`.
 
-It shells out to the existing skill tools (etask `tasks.py` / `checklists.py`,
+It shells out to the existing skill tools (atask `tasks.py` / `checklists.py`,
 dev-automation `azure_devops.py`) so it inherits their config/auth/UTF-8 handling and
 stays stdlib-only itself. Every sub-call is defensive: a failed fetch is noted and the
 pack is still produced from whatever succeeded (never hard-fails the pipeline).
 
 Usage:
-    python context_pack.py build --source etask --task 12345 --type feature
+    python context_pack.py build --source atask --task 12345 --type feature
     python context_pack.py build --source azure --task 987 --out ../../../temp/runs/az-987_context.md
-    python context_pack.py build --source etask --task 12345 --no-comments   # skip a slow fetch
+    python context_pack.py build --source atask --task 12345 --no-comments   # skip a slow fetch
 
 Output: one JSON object on stdout; the Markdown pack is written to --out
 (default temp/runs/<source>-<task>_context.md).
@@ -36,7 +36,7 @@ except (AttributeError, ValueError):
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SKILLS = os.path.dirname(os.path.dirname(_HERE))
-_ETASK_TOOLS = os.path.join(_SKILLS, "etask-automation", "tools")
+_ATASK_TOOLS = os.path.join(_SKILLS, "atask-automation", "tools")
 _DEV_TOOLS = os.path.join(_SKILLS, "dev-automation", "tools")
 
 sys.path.insert(0, _HERE)
@@ -89,7 +89,7 @@ def _run_tool(script_dir, script, cli_args):
 
 
 def _records(result):
-    """Pull a list of records out of an eTask envelope {success, content|content.data}."""
+    """Pull a list of records out of an aTask envelope {success, content|content.data}."""
     if not isinstance(result, dict) or result.get("error") or result.get("success") is False:
         return []
     content = result.get("content")
@@ -119,18 +119,18 @@ def _looks_like_ac(text):
     return any(h in t for h in AC_HINT)
 
 
-# --- eTask source ----------------------------------------------------------------
+# --- aTask source ----------------------------------------------------------------
 
 def _fetch_records(script, cli_args, label, notes):
     """Run a tool, append any error to notes, return the record list (possibly empty)."""
-    res, err = _run_tool(_ETASK_TOOLS, script, cli_args)
+    res, err = _run_tool(_ATASK_TOOLS, script, cli_args)
     if err:
         notes.append(f"{label}: {err}")
         return []
     return _records(res)
 
 
-def _etask_checklist(task_id, notes, ac_seeds):
+def _atask_checklist(task_id, notes, ac_seeds):
     lines = []
     for it in _fetch_records("checklists.py", ["list", str(task_id)], "checklists", notes):
         name = _first(it, "name", "content", "title", default="").strip()
@@ -143,7 +143,7 @@ def _etask_checklist(task_id, notes, ac_seeds):
     return (f"Checklist ({len(lines)})", "\n".join(lines)) if lines else None
 
 
-def _etask_comments(task_id, notes, ac_seeds):
+def _atask_comments(task_id, notes, ac_seeds):
     lines = []
     for c in _fetch_records("checklists.py", ["comments", str(task_id)], "comments", notes):
         body = _first(c, "content", "comment", "text", default="").strip()
@@ -157,7 +157,7 @@ def _etask_comments(task_id, notes, ac_seeds):
     return (f"Comments ({len(lines)})", "\n".join(lines)) if lines else None
 
 
-def _etask_subtasks(task_id, notes):
+def _atask_subtasks(task_id, notes):
     lines = []
     for s in _fetch_records("tasks.py", ["subtasks", str(task_id), "--format", "json"],
                             "subtasks", notes):
@@ -182,17 +182,17 @@ def _merge_detail(task, detail):
     return merged, True
 
 
-def _gather_etask(task_id, want_comments, want_checklist, want_subtasks):
+def _gather_atask(task_id, want_comments, want_checklist, want_subtasks):
     notes, ac_seeds, sections = [], [], []
 
-    task_res, err = _run_tool(_ETASK_TOOLS, "tasks.py", ["get", str(task_id), "--format", "json"])
+    task_res, err = _run_tool(_ATASK_TOOLS, "tasks.py", ["get", str(task_id), "--format", "json"])
     if err:
         notes.append(f"get_task: {err}")
     task = _single(task_res) if task_res else {}
 
-    # Làm giàu bằng REST trực tiếp GET /api/tasks/{id} (cần ETASK_BEARER_TOKEN) —
+    # Làm giàu bằng REST trực tiếp GET /api/tasks/{id} (cần ATASK_BEARER_TOKEN) —
     # kênh ai/execute bỏ sót description/custom fields ở một số task.
-    detail, derr = _run_tool(_ETASK_TOOLS, "tasks.py", ["get-detail", str(task_id)])
+    detail, derr = _run_tool(_ATASK_TOOLS, "tasks.py", ["get-detail", str(task_id)])
     if derr:
         notes.append(f"get_detail: {derr[:150]}")
     else:
@@ -204,9 +204,9 @@ def _gather_etask(task_id, want_comments, want_checklist, want_subtasks):
     desc = _first(task, "description", "desc", default="")
 
     for enabled, sec in (
-        (want_checklist, lambda: _etask_checklist(task_id, notes, ac_seeds)),
-        (want_comments, lambda: _etask_comments(task_id, notes, ac_seeds)),
-        (want_subtasks, lambda: _etask_subtasks(task_id, notes)),
+        (want_checklist, lambda: _atask_checklist(task_id, notes, ac_seeds)),
+        (want_comments, lambda: _atask_comments(task_id, notes, ac_seeds)),
+        (want_subtasks, lambda: _atask_subtasks(task_id, notes)),
     ):
         if enabled:
             section = sec()
@@ -265,13 +265,13 @@ def _render(source, task_id, title, desc, sections, meta):
 def cmd_build(args):
     task_id = args.task
     source = args.source.lower()
-    if source == "etask":
-        title, desc, sections, ac_seeds, notes, meta = _gather_etask(
+    if source == "atask":
+        title, desc, sections, ac_seeds, notes, meta = _gather_atask(
             task_id, not args.no_comments, not args.no_checklist, not args.no_subtasks)
     elif source == "azure":
         title, desc, sections, ac_seeds, notes, meta = _gather_azure(task_id)
     else:
-        return {"error": True, "message": f"unknown source '{source}' (etask|azure)"}
+        return {"error": True, "message": f"unknown source '{source}' (atask|azure)"}
 
     pack = _render(source, task_id, title, desc, sections, meta)
 
@@ -324,7 +324,7 @@ def main():
     ap = argparse.ArgumentParser(description="Assemble an Intake context pack for a task.")
     sub = ap.add_subparsers(dest="action", required=True)
     b = sub.add_parser("build", help="Gather task + comments + checklist + subtasks -> pack")
-    b.add_argument("--source", required=True, help="etask | azure")
+    b.add_argument("--source", required=True, help="atask | azure")
     b.add_argument("--task", required=True, help="task / work-item id")
     b.add_argument("--type", default=None, help="hint bugfix|feature (passed through, optional)")
     b.add_argument("--out", default=None, help="pack output path (default temp/runs/<src>-<id>_context.md)")

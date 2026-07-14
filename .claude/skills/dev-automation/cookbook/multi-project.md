@@ -9,7 +9,7 @@ tại `<repo>/work/projects.json` (đè bằng env `WORK_DIR` nếu cần).
   projects.json     # registry: project → {gitlab_project_id, azure_project, clone_dir, stack, environments, ...}
   proj.sh           # shell switcher cho terminal của con người
   .profiles/        # (tuỳ chọn) file profile per-project
-  etask/            # git clone idaas/etask
+  atask/            # git clone <group>/atask
   <project-B>/      # git clone ...
 ```
 
@@ -25,8 +25,8 @@ Tool đọc config qua `config.get()` → ưu tiên **biến môi trường** r�
 ```bash
 source ./work/proj.sh     # thêm dòng này vào ~/.bashrc
 proj                      # liệt kê project
-proj etask                # export env + cd vào ./work/etask
-# từ đây mọi lệnh dev-automation tự trỏ đúng project etask
+proj atask                # export env + cd vào ./work/atask
+# từ đây mọi lệnh dev-automation tự trỏ đúng project atask
 ```
 
 ## Cho agent (Claude Code)
@@ -35,8 +35,8 @@ proj etask                # export env + cd vào ./work/etask
 project đang làm, rồi **prefix env inline** mỗi lệnh (vì mỗi Bash call là shell mới):
 
 ```bash
-# ví dụ project có gitlab_project_id=5401, azure_project=KYTA-all-in-one
-GITLAB_PROJECT_ID=5401 AZURE_DEVOPS_PROJECT=KYTA-all-in-one \
+# ví dụ project có gitlab_project_id=123, azure_project=My-Project
+GITLAB_PROJECT_ID=123 AZURE_DEVOPS_PROJECT=My-Project \
   python3 gitlab_api.py list-mrs opened
 ```
 
@@ -46,7 +46,7 @@ Bước viết code/commit/push chạy bên trong `clone_dir` của project tư�
 
 1. Clone repo về workspace:
    ```bash
-   git clone https://gitlab.fis.vn/<group>/<repo>.git ./work/<name>
+   git clone https://gitlab.your-company.com/<group>/<repo>.git ./work/<name>
    ```
    (Để tránh nhúng token vào remote: clone xong set remote sạch + dùng credential helper.)
 2. Lấy `GITLAB_PROJECT_ID`: mở repo trên GitLab → Settings → General (hoặc qua API).

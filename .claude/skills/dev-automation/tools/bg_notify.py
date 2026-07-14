@@ -18,10 +18,10 @@ build FAILURE của jenkins.py).
 Cách dùng (agent fire-and-forget)
 ---------------------------------
     cd .claude/skills/dev-automation/tools
-    python bg_notify.py --label "Build dev etask" -- \
-        python jenkins.py build --project etask --env dev --wait
-    python bg_notify.py --label "Compile/test etask" -- \
-        python test_runner.py run --project etask --kind test
+    python bg_notify.py --label "Build dev atask" -- \
+        python jenkins.py build --project atask --env dev --wait
+    python bg_notify.py --label "Compile/test atask" -- \
+        python test_runner.py run --project atask --kind test
 
 Mọi thứ sau `--` là LỆNH cần chạy (không qua shell). Tool in NGAY một JSON
 `{"detached": true, "pid": …, "log": …}` rồi trả quyền — agent có thể kết thúc lượt
@@ -130,9 +130,9 @@ def _tail(text: str, n: int) -> str:
 
 
 def _notify_fchat(summary: dict, tail_text: str):
-    """Đăng kết quả về FPT Chat group (tag người yêu cầu) nếu env FCHAT_NOTIFY_GROUP
+    """Đăng kết quả về TChat group (tag người yêu cầu) nếu env FCHAT_NOTIFY_GROUP
     được set — group_watch.py set sẵn khi giao việc cho agent. Gọi notify_group.py
-    của skill fpt-chat như SUBPROCESS để tránh đụng module config.py trùng tên.
+    của skill tchat như SUBPROCESS để tránh đụng module config.py trùng tên.
     Trả True nếu đã đăng, False nếu không cấu hình / lỗi."""
     gid = os.environ.get("FCHAT_NOTIFY_GROUP")
     if not gid:
@@ -142,7 +142,7 @@ def _notify_fchat(summary: dict, tail_text: str):
     text = f"{icon} {summary['label']} — {status} (⏱ {summary['duration']})"
     if tail_text.strip():
         text += "\n" + tail_text
-    script = os.path.join(REPO_ROOT, ".claude", "skills", "fpt-chat-automation",
+    script = os.path.join(REPO_ROOT, ".claude", "skills", "tchat-automation",
                           "tools", "notify_group.py")
     if not os.path.isfile(script):
         return False
@@ -212,7 +212,7 @@ def run_worker(cmd: list, label: str, chat, tail_n: int) -> dict:
     print(combined)
     sys.stdout.flush()
 
-    # Báo CẢ HAI kênh: FPT Chat (nếu có context group_watch → tag người yêu cầu) VÀ
+    # Báo CẢ HAI kênh: TChat (nếu có context group_watch → tag người yêu cầu) VÀ
     # Telegram (nếu có chat → khép vòng sau khi bấm Duyệt). Telegram-bridge thuần
     # không set FCHAT env → _notify_fchat trả False, chỉ báo Telegram như cũ.
     tail_text = _tail(combined, tail_n)

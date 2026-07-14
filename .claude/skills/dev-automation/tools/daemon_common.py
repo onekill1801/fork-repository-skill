@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared supervisor for long-running poll daemons (mr_watch, etask_watch, ...).
+"""Shared supervisor for long-running poll daemons (mr_watch, atask_watch, ...).
 
 The watchers used to loop with a fixed `time.sleep(interval)` and a broad
 `except Exception: print(...)`. That survives a crash but behaves badly on real

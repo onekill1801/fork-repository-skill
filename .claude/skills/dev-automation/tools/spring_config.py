@@ -16,8 +16,8 @@ Extracted: spring.datasource.url/username/password (+ driver) -> engine/host/por
 db/schema · server.port + server.servlet.context-path -> local base_url.
 
 Usage:
-    python spring_config.py read --project etask --env dev        # clone_dir từ registry
-    python spring_config.py read --dir D:/work/etask --env dev [--show-secrets]
+    python spring_config.py read --project atask --env dev        # clone_dir từ registry
+    python spring_config.py read --dir D:/work/atask --env dev [--show-secrets]
 
 Output: one JSON object; password masked unless --show-secrets.
 """

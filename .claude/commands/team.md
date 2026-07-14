@@ -15,13 +15,13 @@ hoặc rỗng = liệt kê đội nhóm.
    - **Cập nhật:** `python team.py set <key> --role ... --skills ... --personality "..."`
      (là `[WRITE]` — xác nhận trước khi sửa hàng loạt).
    - **Match người cho task:**
-     a. `python team.py match --task "<mô tả>" --exclude chungtv8` → shortlist heuristic.
+     a. `python team.py match --task "<mô tả>" --exclude <ATASK_MY_LOGIN trong .env>` → shortlist heuristic.
      b. Với top ứng viên: `python team.py get <key>` đọc hồ sơ đầy đủ.
      c. **Chọn cuối + nêu lý do** (skill khớp, tải, tính cách phù hợp việc), trình người dùng.
 4. Nếu hồ sơ còn trống (mới bootstrap), gợi ý người dùng bổ sung skill/role/tính cách.
 
 ## Ghi chú
 
-- `key` = username (vd `baond17`). Bootstrap từ FPT Chat: xem `team.py bootstrap`.
+- `key` = username (vd `baond17`). Bootstrap từ TChat: xem `team.py bootstrap`.
 - Không bịa kỹ năng/tính cách — chỉ ghi điều người dùng cung cấp hoặc quan sát được.
 - File `work/team.json` KHÔNG commit (nhạy cảm).

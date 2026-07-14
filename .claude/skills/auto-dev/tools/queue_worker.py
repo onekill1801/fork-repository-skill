@@ -3,7 +3,7 @@
 
 Vòng đời một lượt:
     task_queue.next (lock luồng task_resolver, ưu tiên theo priority->tuổi)
-      -> spawn `claude -p "/etask-run <task_id> batch"` (pipeline mode=auto: gate người
+      -> spawn `claude -p "/atask-run <task_id> batch"` (pipeline mode=auto: gate người
          thay bằng gate bằng chứng; task mơ hồ tự PARK, không kẹt hàng)
       -> agent tự `done ok|fail` khi xong; worker đối chiếu state item:
            done   -> task kế (nhánh gốc local đã chứa merge của task này)
@@ -11,12 +11,12 @@ Vòng đời một lượt:
            processing (agent chết giữa chừng) -> release lock + done fail + báo
     hết item ready -> --interval N thì ngủ rồi poll tiếp, không thì thoát.
 
-Git-chain nằm TRONG pipeline batch (etask-run.md § BATCH): trước mỗi task
+Git-chain nằm TRONG pipeline batch (atask-run.md § BATCH): trước mỗi task
 `checkout <gốc> && pull`, xong task `merge --no-ff` nhánh task vào GỐC LOCAL
 (chưa đụng remote) — task sau luôn build trên kết quả task trước.
 
 Usage:
-    python queue_worker.py run --project etask [--env dev] [--max-tasks 3]
+    python queue_worker.py run --project atask [--env dev] [--max-tasks 3]
         [--interval 0] [--task-timeout 7200] [--dry-run]
 """
 
@@ -51,8 +51,8 @@ def _repo_root():
 
 def _spawn_agent(task_id, timeout):
     """Chạy một phiên agent đầy đủ cho task (blocking). Test seam."""
-    prompt = (f"/etask-run {task_id} batch — item đã APPROVED (plan+verify đã duyệt ở "
-              f"/etask-prep); chạy đúng .claude/commands/etask-run.md: luồng THỰC THI "
+    prompt = (f"/atask-run {task_id} batch — item đã APPROVED (plan+verify đã duyệt ở "
+              f"/atask-prep); chạy đúng .claude/commands/atask-run.md: luồng THỰC THI "
               f"thuần code, merge LOCAL vào nhánh gốc, kẹt thì PARK + báo Telegram.")
     proc = subprocess.run(
         [CLAUDE_BIN, "-p", prompt, "--dangerously-skip-permissions"],
@@ -140,7 +140,7 @@ def cmd_run(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Serial queue worker: next -> agent /etask-run batch -> done.")
+    ap = argparse.ArgumentParser(description="Serial queue worker: next -> agent /atask-run batch -> done.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--project", default=None, help="(thông tin) project chính của đợt chạy")

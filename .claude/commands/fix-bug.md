@@ -6,7 +6,7 @@ Execute **Workflow 2** from @.claude/skills/dev-automation/SKILL.md.
 
 ## Prerequisites
 
-- Run from the **Java project repository** (eTask), not only this skills repo, if the goal is to change application code.
+- Run from the **Java project repository** (aTask), not only this skills repo, if the goal is to change application code.
 - Copy `.env` and `.claude/skills/dev-automation/` into that project if needed.
 - Confirm with the user before creating branches or merge requests if the environment is production-sensitive.
 

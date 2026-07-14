@@ -14,23 +14,23 @@ work_dir = $WORK_DIR or <repo>/work (same as test_runner.py).
 
 projects.json shape (only `stack` / `environments` are read here):
 {
-  "etask": {
+  "atask": {
     "default_env": "dev",
     "protected_envs": ["prod", "production"],
     "stack": {                                   # shared defaults across envs
-      "db": {"engine": "postgres", "user": "etask_app", "name": "etask", "port": "5432"},
+      "db": {"engine": "postgres", "user": "atask_app", "name": "atask", "port": "5432"},
       "redis": {"port": "6379", "db": "0"},
-      "jenkins": {"job": "idaas/job/etask-ci"}
+      "jenkins": {"job": "group/job/atask-ci"}
     },
     "environments": {
       "local": {"api_base_url": "http://localhost:8080",
                 "db": {"host": "localhost"}, "redis": {"host": "localhost"},
                 "kafka_rest_url": "http://localhost:8082"},
-      "dev":   {"api_base_url": "https://etask.dev",
+      "dev":   {"api_base_url": "https://atask.dev",
                 "db": {"host": "pg.dev"}, "redis": {"host": "redis.dev"},
                 "kafka_rest_url": "http://kafka-rest.dev:8082"},
-      "uat":   {"api_base_url": "https://etask.uat", "db": {"host": "pg.uat"}},
-      "prod":  {"api_base_url": "https://etask.prod", "db": {"host": "pg.prod"}}
+      "uat":   {"api_base_url": "https://atask.uat", "db": {"host": "pg.uat"}},
+      "prod":  {"api_base_url": "https://atask.prod", "db": {"host": "pg.prod"}}
     }
   }
 }

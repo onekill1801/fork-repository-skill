@@ -240,7 +240,7 @@ def main() -> int:
     c.add_argument("--engine", choices=["postgres", "mysql"],
                    help="postgres|mysql (default: db.engine from --project, else required)")
     c.add_argument("--expect-db", help="isolated DB name that MUST be the connected one "
-                                       "(e.g. etask_task_123); mismatch -> error, not pass")
+                                       "(e.g. atask_task_123); mismatch -> error, not pass")
     c.add_argument("--host")
     c.add_argument("--port")
     c.add_argument("--user")

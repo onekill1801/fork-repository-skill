@@ -33,11 +33,11 @@ def ns(**kw):
 
 
 BOOT_LOG = """\
-2026-07-06 INFO  Starting EtaskApp
+2026-07-06 INFO  Starting AtaskApp
 2026-07-06 ERROR o.s.boot.SpringApplication - Application run failed
 java.lang.IllegalStateException: Failed to introspect Class [SearchConfiguration]
-Caused by: java.lang.NoClassDefFoundError: com/fis/search/service/ElasticSearchService
-Caused by: java.lang.ClassNotFoundException: com.fis.search.service.ElasticSearchService
+Caused by: java.lang.NoClassDefFoundError: com/example/search/service/ElasticSearchService
+Caused by: java.lang.ClassNotFoundException: com.example.search.service.ElasticSearchService
 APPLICATION FAILED TO START
 Description:
 A component required a bean that could not be found.
@@ -59,7 +59,7 @@ FLOW_FAIL = {
 class DiagnosisTest(unittest.TestCase):
     def test_boot_cause_extracts_caused_by_chain(self):
         out = fix_loop.extract_boot_cause(BOOT_LOG)
-        self.assertIn("ClassNotFoundException: com.fis.search", out)
+        self.assertIn("ClassNotFoundException: com.example.search", out)
         self.assertIn("APPLICATION FAILED TO START", out)
         self.assertIn("Description:", out)
 

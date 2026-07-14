@@ -31,15 +31,15 @@ Understand this codebase and report your understanding.
 20. @.claude/skills/dev-automation/prompts/code_review_prompt.md
 21. @.claude/skills/dev-automation/prompts/notify_tester_prompt.md
 
-### Step 4: eTask Automation Skill
-22. @.claude/skills/etask-automation/SKILL.md
-23. @.claude/skills/etask-automation/tools/config.py
-24. @.claude/skills/etask-automation/tools/client.py
-25. @.claude/skills/etask-automation/tools/tasks.py
-26. @.claude/skills/etask-automation/tools/checklists.py
-27. @.claude/skills/etask-automation/tools/projects.py
-28. @.claude/skills/etask-automation/tools/search.py
-29. @.claude/skills/etask-automation/tools/analytics.py
+### Step 4: aTask Automation Skill
+22. @.claude/skills/atask-automation/SKILL.md
+23. @.claude/skills/atask-automation/tools/config.py
+24. @.claude/skills/atask-automation/tools/client.py
+25. @.claude/skills/atask-automation/tools/tasks.py
+26. @.claude/skills/atask-automation/tools/checklists.py
+27. @.claude/skills/atask-automation/tools/projects.py
+28. @.claude/skills/atask-automation/tools/search.py
+29. @.claude/skills/atask-automation/tools/analytics.py
 
 ### Step 5: Skill Scaffold (import tools from other apps)
 22. @.claude/skills/skill-scaffold/SKILL.md

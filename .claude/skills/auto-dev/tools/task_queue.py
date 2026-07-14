@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Task queue — intake eTask/Azure tasks, clarify them, then process ONE at a time.
+"""Task queue — intake aTask/Azure tasks, clarify them, then process ONE at a time.
 
 Why a queue: several automated runs on the same repo at once risk stepping on each
 other's branches/worktrees. The lock is PER FLOW (owner), default `task_resolver`:
@@ -8,8 +8,8 @@ handles ONE task at a time — while a human working manually is never blocked b
 Intake (enrich + clarify) is cheap and safe to do for many tasks up front; only the
 processing part is serialised.
 
-Hand-off: `answer` folds the human's answers into a brief AND (source=etask, default)
-comments that brief back onto the eTask task — the task becomes self-contained so it
+Hand-off: `answer` folds the human's answers into a brief AND (source=atask, default)
+comments that brief back onto the aTask task — the task becomes self-contained so it
 can be reassigned to someone else with full context (`--no-sync` to skip the [WRITE]).
 
 Item lifecycle — HAI LUỒNG TÁCH BIỆT (chuẩn bị ≠ thực thi):
@@ -33,9 +33,9 @@ item; qid = "<source>-<task_id>" (natural dedupe).
 Stdlib only. Output: one JSON object on stdout.
 
 Usage:
-    python task_queue.py intake --source etask --task 12345 --project etask --type bugfix \\
+    python task_queue.py intake --source atask --task 12345 --project atask --type bugfix \\
         [--backend claude] [--priority 1|2|3] [--post-questions]
-    python task_queue.py scan [--take 3 --project etask] [--limit 20]
+    python task_queue.py scan [--take 3 --project atask] [--limit 20]
     python task_queue.py list [--state ready]
     python task_queue.py show <qid>
     python task_queue.py answer <qid> --answers-file ans.json | --accept-proposed [--no-sync]
@@ -61,7 +61,7 @@ except (AttributeError, ValueError):
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SKILLS = os.path.dirname(os.path.dirname(_HERE))
 _DEV_TOOLS = os.path.join(_SKILLS, "dev-automation", "tools")
-_ETASK_TOOLS = os.path.join(_SKILLS, "etask-automation", "tools")
+_ATASK_TOOLS = os.path.join(_SKILLS, "atask-automation", "tools")
 sys.path.insert(0, _HERE)
 sys.path.insert(0, _DEV_TOOLS)
 
@@ -215,8 +215,8 @@ def _runs_dir():
 
 # --- intake enrichment (each step is best-effort; failures land in notes) ----------
 
-def etask_priority_to_queue(p):
-    """eTask priority (str '1'..'4', 1=Khẩn cấp) -> queue priority (1..3, 1 chạy trước).
+def atask_priority_to_queue(p):
+    """aTask priority (str '1'..'4', 1=Khẩn cấp) -> queue priority (1..3, 1 chạy trước).
     Dùng bởi task_resolver --enqueue để xếp thứ tự batch."""
     return {"1": 1, "2": 1, "3": 2, "4": 3}.get(str(p or "").strip(), 2)
 
@@ -323,9 +323,9 @@ def _enrich(item, backend, model, notes):
 
 
 def _post_questions(item, notes):
-    """[WRITE] Comment the blocking questions (+proposed answers) onto the eTask task."""
+    """[WRITE] Comment the blocking questions (+proposed answers) onto the aTask task."""
     blocking = [q for q in item.get("questions", []) if q.get("blocking")]
-    if not blocking or item["source"] != "etask":
+    if not blocking or item["source"] != "atask":
         return
     lines = ["[auto-dev intake] Cần làm rõ trước khi code:"]
     for i, q in enumerate(blocking, 1):
@@ -334,9 +334,9 @@ def _post_questions(item, notes):
             lines.append(f"   → Đề xuất: {q['proposed']} (xác nhận hoặc sửa giúp)")
     body = "\n".join(lines)
     proc = subprocess.run(
-        [sys.executable, os.path.join(_ETASK_TOOLS, "checklists.py"),
+        [sys.executable, os.path.join(_ATASK_TOOLS, "checklists.py"),
          "add-comment", str(item["task_id"]), body],
-        cwd=_ETASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        cwd=_ATASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=60)
     if proc.returncode != 0:
         notes.append(f"post-questions failed: {(proc.stderr or '').strip()[:200]}")
     else:
@@ -384,11 +384,11 @@ def cmd_add(args):
 
 
 def cmd_scan(args):
-    """List my open eTask tasks not yet queued; --take N runs intake on the first N."""
+    """List my open aTask tasks not yet queued; --take N runs intake on the first N."""
     proc = subprocess.run(
-        [sys.executable, os.path.join(_ETASK_TOOLS, "search.py"), "my-tasks",
+        [sys.executable, os.path.join(_ATASK_TOOLS, "search.py"), "my-tasks",
          "--format", "json"],
-        cwd=_ETASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=120)
+        cwd=_ATASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=120)
     out = (proc.stdout or "").strip()
     start = out.find("{")
     if start == -1:
@@ -405,7 +405,7 @@ def cmd_scan(args):
 
     taken = []
     for cand in fresh[:args.take] if args.take else []:
-        res = cmd_intake(_ns(source="etask", task=cand["task_id"], project=args.project,
+        res = cmd_intake(_ns(source="atask", task=cand["task_id"], project=args.project,
                              type=None, priority=2, backend=args.backend, model=None,
                              post_questions=False))
         taken.append({"task_id": cand["task_id"],
@@ -431,19 +431,19 @@ def cmd_show(args):
     return {"ok": True, "item": item}
 
 
-def _sync_brief_to_etask(item, brief_text, notes):
-    """[WRITE] Comment the clarified brief onto the eTask task so it is self-contained
+def _sync_brief_to_atask(item, brief_text, notes):
+    """[WRITE] Comment the clarified brief onto the aTask task so it is self-contained
     and can be handed off to another person with full context."""
-    if item["source"] != "etask" or not (brief_text or "").strip():
+    if item["source"] != "atask" or not (brief_text or "").strip():
         return
     body = ("[auto-dev intake] Yêu cầu đã làm rõ (đủ ngữ cảnh để bàn giao):\n\n"
             + brief_text.strip())[:4000]
     proc = subprocess.run(
-        [sys.executable, os.path.join(_ETASK_TOOLS, "checklists.py"),
+        [sys.executable, os.path.join(_ATASK_TOOLS, "checklists.py"),
          "add-comment", str(item["task_id"]), body],
-        cwd=_ETASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=60)
+        cwd=_ATASK_TOOLS, capture_output=True, text=True, encoding="utf-8", timeout=60)
     if proc.returncode != 0:
-        notes.append(f"sync brief -> eTask failed: {(proc.stderr or '').strip()[:200]}")
+        notes.append(f"sync brief -> aTask failed: {(proc.stderr or '').strip()[:200]}")
     else:
         item["brief_synced"] = _now()
 
@@ -518,10 +518,10 @@ def _parse_reply(text, questions):
     return answers, sorted(found)
 
 
-def _etask_tool(script, cli_args, timeout=60):
-    """Run an etask CLI, parse its JSON (tolerates warn-preamble). Test seam."""
-    proc = subprocess.run([sys.executable, os.path.join(_ETASK_TOOLS, script), *cli_args],
-                          cwd=_ETASK_TOOLS, capture_output=True, text=True,
+def _atask_tool(script, cli_args, timeout=60):
+    """Run an atask CLI, parse its JSON (tolerates warn-preamble). Test seam."""
+    proc = subprocess.run([sys.executable, os.path.join(_ATASK_TOOLS, script), *cli_args],
+                          cwd=_ATASK_TOOLS, capture_output=True, text=True,
                           encoding="utf-8", timeout=timeout)
     out = (proc.stdout or "").strip()
     start = out.find("{")
@@ -559,7 +559,7 @@ def cmd_ask_tg(args):
 
 
 def cmd_reply(args):
-    """Parse comment tự do ('1: ok; 2: dùng 409...') -> chốt answers -> brief + sync eTask."""
+    """Parse comment tự do ('1: ok; 2: dùng 409...') -> chốt answers -> brief + sync aTask."""
     item = _load(args.qid)
     if not item:
         return {"error": True, "message": f"no item {args.qid}"}
@@ -584,9 +584,9 @@ def cmd_reply(args):
 
 
 def cmd_mark(args):
-    """[WRITE] Chuyển TRẠNG THÁI task trên eTask theo statusType (team thấy được).
+    """[WRITE] Chuyển TRẠNG THÁI task trên aTask theo statusType (team thấy được).
 
-    eTask `update_task(status=...)` nhận status-ID theo-từng-list, không nhận keyword —
+    aTask `update_task(status=...)` nhận status-ID theo-từng-list, không nhận keyword —
     nên tra ID bằng cách quét task trong CÙNG list có statusType đích (đúng cách
     task_resolver làm; ES trả task chéo list nên phải check listTaskId khớp).
     Điểm gọi trong luồng: `next` xong -> mark processing ("Đang làm");
@@ -595,9 +595,9 @@ def cmd_mark(args):
     item = _load(args.qid)
     if not item:
         return {"error": True, "message": f"no item {args.qid}"}
-    if item["source"] != "etask":
-        return {"error": True, "message": "mark chỉ áp dụng cho task eTask"}
-    task = _envelope_rows(_etask_tool("tasks.py", ["get", item["task_id"], "--format", "json"]))
+    if item["source"] != "atask":
+        return {"error": True, "message": "mark chỉ áp dụng cho task aTask"}
+    task = _envelope_rows(_atask_tool("tasks.py", ["get", item["task_id"], "--format", "json"]))
     task = task[0] if task else {}
     list_id = task.get("listTaskId")
     if not list_id:
@@ -605,7 +605,7 @@ def cmd_mark(args):
     current = (task.get("statusType") or "").lower()
     if current == args.to.lower():
         return {"ok": True, "unchanged": True, "statusType": current}
-    rows = _envelope_rows(_etask_tool("search.py", ["tasks", "--list", list_id,
+    rows = _envelope_rows(_atask_tool("search.py", ["tasks", "--list", list_id,
                                                     "--format", "json"]))
     status_id = next((x.get("status") for x in rows
                       if x.get("listTaskId") == list_id and x.get("status")
@@ -613,14 +613,14 @@ def cmd_mark(args):
     if not status_id:
         return {"error": True,
                 "message": f"list này không có cột statusType='{args.to}' (hoặc chưa có "
-                           f"task nào ở cột đó để tra ID) — đổi tay trên eTask 1 lần"}
-    upd = _etask_tool("tasks.py", ["update", item["task_id"], "--status", str(status_id)])
+                           f"task nào ở cột đó để tra ID) — đổi tay trên aTask 1 lần"}
+    upd = _atask_tool("tasks.py", ["update", item["task_id"], "--status", str(status_id)])
     if upd.get("error") or upd.get("success") is False:
         return {"error": True, "message": f"update status failed: {upd.get('message')}"}
     if args.comment:
-        _etask_tool("checklists.py", ["add-comment", item["task_id"], args.comment])
-    item["notes"].append(f"etask status: {current or '?'} -> {args.to} (id={status_id})")
-    item["etask_status"] = args.to
+        _atask_tool("checklists.py", ["add-comment", item["task_id"], args.comment])
+    item["notes"].append(f"atask status: {current or '?'} -> {args.to} (id={status_id})")
+    item["atask_status"] = args.to
     _save(item)
     return {"ok": True, "from": current, "to": args.to, "status_id": status_id,
             "commented": bool(args.comment)}
@@ -662,7 +662,7 @@ def cmd_answer(args):
         f"{brief.get('assumed_count', 0)} assumed"
         + (" (accept-proposed)" if args.accept_proposed else ""))
     if not getattr(args, "no_sync", False):
-        _sync_brief_to_etask(item, brief.get("brief") or "", item["notes"])
+        _sync_brief_to_atask(item, brief.get("brief") or "", item["notes"])
     _save(item)
     return {"ok": True, "item": _summary(item), "brief_path": brief.get("brief_path"),
             "brief_synced": item.get("brief_synced")}
@@ -700,7 +700,7 @@ def cmd_next(args):
     ready = [i for i in _all_items() if i["state"] == "approved"]
     if not ready:
         return {"ok": True, "message": "queue empty (no APPROVED items — task ready thì "
-                                       "chạy luồng chuẩn bị /etask-prep để duyệt solution)",
+                                       "chạy luồng chuẩn bị /atask-prep để duyệt solution)",
                 "item": None}
     ready.sort(key=lambda i: (i.get("priority", 2), i.get("created", "")))
     item = ready[0]
@@ -783,11 +783,11 @@ def cmd_remove(args):
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Serial task queue: intake + clarify eTask/Azure tasks, process one at a time.")
+        description="Serial task queue: intake + clarify aTask/Azure tasks, process one at a time.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     i = sub.add_parser("intake", help="enrich (pack+scout+recall+clarify) then enqueue")
-    i.add_argument("--source", required=True, choices=["etask", "azure"])
+    i.add_argument("--source", required=True, choices=["atask", "azure"])
     i.add_argument("--task", required=True)
     i.add_argument("--project", default=None, help="registry name (enables scout+recall)")
     i.add_argument("--type", default=None, help="bugfix|feature|...")
@@ -795,7 +795,7 @@ def main():
     i.add_argument("--backend", default=None, help="clarify qua agent (claude|cursor); bỏ = heuristic")
     i.add_argument("--model", default=None)
     i.add_argument("--post-questions", action="store_true",
-                   help="[WRITE] comment câu hỏi blocking + proposed lên task eTask")
+                   help="[WRITE] comment câu hỏi blocking + proposed lên task aTask")
 
     a = sub.add_parser("add", help="enqueue without enrichment (manual/direct request)")
     a.add_argument("--source", default="manual")
@@ -806,7 +806,7 @@ def main():
     a.add_argument("--priority", type=int, default=2, choices=[1, 2, 3])
     a.add_argument("--ready", action="store_true", help="skip clarification state")
 
-    sc = sub.add_parser("scan", help="find my eTask tasks not yet queued; --take N intakes them")
+    sc = sub.add_parser("scan", help="find my aTask tasks not yet queued; --take N intakes them")
     sc.add_argument("--limit", type=int, default=20)
     sc.add_argument("--take", type=int, default=0)
     sc.add_argument("--project", default=None)
@@ -818,13 +818,13 @@ def main():
     sh = sub.add_parser("show", help="full item detail (questions, artifacts)")
     sh.add_argument("qid")
 
-    an = sub.add_parser("answer", help="fold answers -> brief (ready) + sync brief lên eTask")
+    an = sub.add_parser("answer", help="fold answers -> brief (ready) + sync brief lên aTask")
     an.add_argument("qid")
     an.add_argument("--answers-file", default=None, help="JSON list/map (clarify format)")
     an.add_argument("--accept-proposed", action="store_true",
                     help="chấp nhận toàn bộ câu trả lời đề xuất (one-click)")
     an.add_argument("--no-sync", action="store_true",
-                    help="KHÔNG comment brief lên task eTask (mặc định có — [WRITE], team thấy)")
+                    help="KHÔNG comment brief lên task aTask (mặc định có — [WRITE], team thấy)")
 
     at = sub.add_parser("ask-tg", help="gửi câu hỏi làm rõ qua Telegram (trả lời tự do bằng comment)")
     at.add_argument("qid")
@@ -832,9 +832,9 @@ def main():
     rp = sub.add_parser("reply", help="nạp comment trả lời ('1: ...; 2: ok') -> brief + ready")
     rp.add_argument("qid")
     rp.add_argument("--text", required=True, help="nguyên văn tin nhắn trả lời của người dùng")
-    rp.add_argument("--no-sync", action="store_true", help="không comment brief lên eTask")
+    rp.add_argument("--no-sync", action="store_true", help="không comment brief lên aTask")
 
-    mk = sub.add_parser("mark", help="[WRITE] chuyển trạng thái task eTask theo statusType")
+    mk = sub.add_parser("mark", help="[WRITE] chuyển trạng thái task aTask theo statusType")
     mk.add_argument("qid")
     mk.add_argument("--to", required=True,
                     help="statusType đích: todo|processing|approved|completed|closed|custom")

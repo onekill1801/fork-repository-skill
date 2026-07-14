@@ -8,8 +8,8 @@
 | **fork-terminal** | "fork terminal", "new terminal" — spawn parallel agents or CLI in a new window |
 | **dev-automation** | "review MR", "fix bug", "list my tasks", Azure DevOps + GitLab workflows |
 | **skill-scaffold** | "extract tools", "scaffold skill" — import app tools into new skills |
-| **etask-automation** | "create task", "search tasks", "my tasks", "show statistics", "list projects" — FIS eTask platform |
-| **fpt-chat-automation** | "fpt chat", "list my conversations", "fpt chat todos", "đọc tin nhắn fpt chat" — read-only FPT Chat REST (conversations, messages, todos, directory) |
+| **atask-automation** | "create task", "search tasks", "my tasks", "show statistics", "list projects" — aTask platform |
+| **tchat-automation** | "tchat", "list my conversations", "tchat todos", "đọc tin nhắn tchat" — read-only TChat REST (conversations, messages, todos, directory) |
 
 ## Slash commands (`.claude/commands/`)
 
@@ -27,11 +27,11 @@
 | `/extract-tools` | Phase 1: scan app → `temp/tool-inventory.yaml` |
 | `/design-skill` | Phase 2: inventory → `temp/skill-design.md` |
 | `/scaffold-skill` | Phase 3: generate new skill under `.claude/skills/` |
-| `/etask-search [query]` | Search eTask tasks (full-text or my assigned tasks) |
-| `/etask-create <name> [list_id]` | Create a new eTask task |
-| `/etask-projects [filter]` | Browse eTask projects, sprints, and workspaces |
-| `/etask-stats [scope]` | Show eTask analytics and statistics |
-| `/fpt-chat` | FPT Chat: list conversations + todos overview (read-only) |
+| `/atask-search [query]` | Search aTask tasks (full-text or my assigned tasks) |
+| `/atask-create <name> [list_id]` | Create a new aTask task |
+| `/atask-projects [filter]` | Browse aTask projects, sprints, and workspaces |
+| `/atask-stats [scope]` | Show aTask analytics and statistics |
+| `/tchat` | TChat: list conversations + todos overview (read-only) |
 
 Skills run automatically from natural language. Slash commands run the same workflows explicitly.
 

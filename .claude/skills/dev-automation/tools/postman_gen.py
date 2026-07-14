@@ -15,8 +15,8 @@ LIMITATIONS (regex-based, best-effort — not a full Java parser):
 
 Usage:
     python postman_gen.py --src /path/to/spring/project --out collection.json
-    python postman_gen.py --project etask                 # src = clone_dir from registry
-    python postman_gen.py --src ./svc --name "etask API" --base-url https://etask.dev
+    python postman_gen.py --project atask                 # src = clone_dir from registry
+    python postman_gen.py --src ./svc --name "atask API" --base-url https://atask.dev
 
 Output: writes the collection JSON; prints a summary {controllers, endpoints, out}.
 """
